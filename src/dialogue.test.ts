@@ -1,0 +1,121 @@
+import {
+  collectCascadeDeleteNodeIds,
+  createDefaultProject,
+  deleteNodesFromProject,
+  deriveEdges,
+  getChoiceFocusScope,
+  getRouteAnchorSide,
+  getRouteHandleDirections,
+  getTerminalNodePosition,
+  terminalCanvasId,
+  type DialogueProject
+} from './dialogue';
+
+function createProject(): DialogueProject {
+  return {
+    version: 1,
+    sceneId: 'routing_test',
+    startNodeId: 'parent',
+    assets: {},
+    nodes: {
+      parent: {
+        id: 'parent',
+        text: 'Parent',
+        portraits: {},
+        canvas: { x: 0, y: 0 },
+        choices: [
+          { id: 'to_right', text: 'Right', canvas: { x: 0, y: 0 }, nextNodeId: 'right' },
+          { id: 'to_up', text: 'Up', canvas: { x: 0, y: 0 }, nextNodeId: 'up' },
+          { id: 'end', text: 'End', canvas: { x: 0, y: 0 }, close: true }
+        ]
+      },
+      right: {
+        id: 'right',
+        text: 'Right target',
+        portraits: {},
+        canvas: { x: 720, y: 0 },
+        choices: []
+      },
+      up: {
+        id: 'up',
+        text: 'Upper target',
+        portraits: {},
+        canvas: { x: 0, y: -520 },
+        choices: []
+      }
+    },
+    viewport: {
+      x: 0,
+      y: 0,
+      zoom: 1
+    }
+  };
+}
+
+describe('dialogue routing', () => {
+  it('chooses the nearest outward side for edge anchors', () => {
+    expect(getRouteAnchorSide({ x: 0, y: 0 }, { x: 0, y: 400 })).toBe('bottom');
+    expect(getRouteAnchorSide({ x: 0, y: 0 }, { x: 0, y: -400 })).toBe('top');
+    expect(getRouteAnchorSide({ x: 0, y: 0 }, { x: 500, y: 100 })).toBe('right');
+    expect(getRouteAnchorSide({ x: 0, y: 0 }, { x: -500, y: 100 })).toBe('left');
+  });
+
+  it('recomputes source handle sides from current node positions', () => {
+    const project = createProject();
+    const initialDirections = getRouteHandleDirections(project, getTerminalNodePosition(project));
+
+    expect(initialDirections.parent['choice:to_right:next']).toBe('right');
+    expect(initialDirections.parent['choice:to_up:next']).toBe('top');
+    expect(initialDirections.parent['choice:end:close']).toBe('bottom');
+
+    project.nodes.right.canvas = { x: 0, y: 640 };
+
+    const movedDirections = getRouteHandleDirections(project, getTerminalNodePosition(project));
+
+    expect(movedDirections.parent['choice:to_right:next']).toBe('bottom');
+  });
+
+  it('routes every close edge into the shared terminal node', () => {
+    const project = createDefaultProject();
+    const closeEdges = deriveEdges(project).filter((edge) => edge.id.endsWith(':close'));
+
+    expect(closeEdges.length).toBeGreaterThan(1);
+    expect(new Set(closeEdges.map((edge) => edge.target))).toEqual(new Set([terminalCanvasId()]));
+    closeEdges.forEach((edge) => {
+      expect(edge.targetHandle).toMatch(/^target:/);
+    });
+  });
+
+  it('defaults the shared terminal node below the graph', () => {
+    const project = createProject();
+    const terminalPosition = getTerminalNodePosition(project);
+
+    expect(terminalPosition).toBeDefined();
+    expect(terminalPosition?.y).toBeGreaterThan(project.nodes.right.canvas.y);
+    expect(terminalPosition?.y).toBeGreaterThan(project.nodes.up.canvas.y);
+  });
+
+  it('can cascade delete descendants that are only reachable from the removed branch', () => {
+    const project = createProject();
+    project.nodes.parent.choices = [{ id: 'to_right', text: 'Right', canvas: { x: 0, y: 0 }, nextNodeId: 'right' }];
+    project.nodes.right.choices = [{ id: 'to_leaf', text: 'Leaf', canvas: { x: 0, y: 0 }, nextNodeId: 'up' }];
+
+    const cascadeIds = collectCascadeDeleteNodeIds(project, 'parent');
+    const nextProject = deleteNodesFromProject(project, cascadeIds);
+
+    expect(cascadeIds).toEqual(new Set(['parent', 'right', 'up']));
+    expect(nextProject.nodes.parent).toBeUndefined();
+    expect(nextProject.nodes.right).toBeUndefined();
+    expect(nextProject.nodes.up).toBeUndefined();
+  });
+
+  it('builds a focus scope from a selected choice through its descendants', () => {
+    const project = createProject();
+    project.nodes.right.choices = [{ id: 'right_end', text: 'End', canvas: { x: 0, y: 0 }, close: true }];
+
+    const scope = getChoiceFocusScope(project, 'parent', 'to_right');
+
+    expect(scope.nodeIds).toEqual(new Set(['parent', 'right']));
+    expect(scope.includeTerminal).toBe(true);
+  });
+});
