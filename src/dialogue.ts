@@ -24,8 +24,29 @@ export const skillColors: Record<SkillId, string> = {
   technology: '#7aa6ff'
 };
 export type RouteBranch = 'next' | 'failure' | 'success' | 'critical';
-export type DisplayBranch = RouteBranch | 'close';
+export type DisplayBranch = RouteBranch | 'close' | 'skill';
 export type HandleSide = 'top' | 'right' | 'bottom' | 'left';
+export type SkillGroupLayout = {
+  id: string;
+  sourceNodeId: string;
+  choiceId: string;
+  nodeIds: string[];
+  position: {
+    x: number;
+    y: number;
+  };
+  width: number;
+  height: number;
+  label: string;
+  subtitle: string;
+};
+
+type DialogueNodeBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 
 export type AssetEntry = {
   id: string;
@@ -208,6 +229,11 @@ export const NODE_HEIGHT = 176;
 export const LEVEL_VERTICAL_SPACING = 460;
 export const SIBLING_HORIZONTAL_SPACING = 560;
 const SHARED_TERMINAL_NODE_ID = 'terminal:end';
+const DIALOGUE_NODE_BASE_HEIGHT = 126;
+const EMPTY_CHOICE_LIST_HEIGHT = 24;
+const CHOICE_PREVIEW_HEIGHT = 56;
+const CHOICE_PREVIEW_GAP = 10;
+const CHOICE_PREVIEW_EXTRA_CHIP_ROW = 20;
 
 export function makeId(prefix: string): string {
   const current = idCounters.get(prefix) ?? 0;
@@ -316,6 +342,10 @@ export function createChoice(text = 'New option', position?: { x: number; y: num
 
 export function terminalCanvasId(): string {
   return SHARED_TERMINAL_NODE_ID;
+}
+
+export function getSkillGroupId(sourceNodeId: string, choiceId: string): string {
+  return `skill-group:${sourceNodeId}:${choiceId}`;
 }
 
 export function getSkillColor(skill: SkillId): string {
@@ -828,6 +858,7 @@ export function ensureTerminalPosition(project: DialogueProject): DialogueProjec
 
 export function getRouteHandleDirections(project: DialogueProject, terminalPosition?: { x: number; y: number }): Record<string, RouteHandleDirectionMap> {
   const directions: Record<string, RouteHandleDirectionMap> = {};
+  const skillGroupByChoiceKey = new Map(deriveSkillGroupLayouts(project).map((group) => [`${group.sourceNodeId}:${group.choiceId}`, group]));
 
   Object.values(project.nodes).forEach((node) => {
     const nodeDirections: RouteHandleDirectionMap = {};
@@ -844,12 +875,94 @@ export function getRouteHandleDirections(project: DialogueProject, terminalPosit
       routes.forEach(([branch, targetPosition]) => {
         nodeDirections[choiceHandleId(choice.id, branch)] = targetPosition ? getRouteAnchorSide(node.canvas, targetPosition) : 'bottom';
       });
+
+      if (choice.resolutionCheck) {
+        const group = skillGroupByChoiceKey.get(`${node.id}:${choice.id}`);
+        const groupCenter = group
+          ? {
+              x: group.position.x + group.width / 2,
+              y: group.position.y + group.height / 2
+            }
+          : undefined;
+
+        nodeDirections[choiceHandleId(choice.id, 'skill')] = groupCenter ? getRouteAnchorSide(node.canvas, groupCenter) : 'bottom';
+      }
     });
 
     directions[node.id] = nodeDirections;
   });
 
   return directions;
+}
+
+export function deriveSkillGroupLayouts(project: DialogueProject): SkillGroupLayout[] {
+  const claimedNodeIds = new Set<string>();
+  const groups: SkillGroupLayout[] = [];
+
+  Object.values(project.nodes).forEach((node) => {
+    node.choices.forEach((choice) => {
+      if (!choice.resolutionCheck) {
+        return;
+      }
+
+      const routeTargets = [choice.resolutionCheck.failureNodeId, choice.resolutionCheck.successNodeId, choice.resolutionCheck.criticalSuccessNodeId]
+        .filter((targetId): targetId is string => Boolean(targetId && project.nodes[targetId]));
+      const uniqueTargetIds = [...new Set(routeTargets)];
+
+      if (uniqueTargetIds.length < 2 || uniqueTargetIds.some((targetId) => claimedNodeIds.has(targetId))) {
+        return;
+      }
+
+      uniqueTargetIds.forEach((targetId) => claimedNodeIds.add(targetId));
+
+      const targetBounds = uniqueTargetIds.map((targetId) => getDialogueNodeBounds(project.nodes[targetId]));
+      const minX = Math.min(...targetBounds.map((bounds) => bounds.x));
+      const minY = Math.min(...targetBounds.map((bounds) => bounds.y));
+      const maxX = Math.max(...targetBounds.map((bounds) => bounds.x + bounds.width));
+      const maxY = Math.max(...targetBounds.map((bounds) => bounds.y + bounds.height));
+      const paddingX = 38;
+      const paddingTop = 78;
+      const paddingBottom = 34;
+
+      groups.push({
+        id: getSkillGroupId(node.id, choice.id),
+        sourceNodeId: node.id,
+        choiceId: choice.id,
+        nodeIds: uniqueTargetIds,
+        position: {
+          x: minX - paddingX,
+          y: minY - paddingTop
+        },
+        width: maxX - minX + paddingX * 2,
+        height: maxY - minY + paddingTop + paddingBottom,
+        label: choice.text || 'Skill check',
+        subtitle: `${choice.resolutionCheck.skill} • difficulty ${choice.resolutionCheck.difficulty}`
+      });
+    });
+  });
+
+  return groups;
+}
+
+function getDialogueNodeBounds(node: DialogueNode): DialogueNodeBounds {
+  const choiceCount = node.choices.length;
+  const choiceListHeight =
+    choiceCount === 0
+      ? EMPTY_CHOICE_LIST_HEIGHT
+      : node.choices.reduce((total, choice) => total + getChoicePreviewHeight(choice), 0) + CHOICE_PREVIEW_GAP * (choiceCount - 1);
+
+  return {
+    x: node.canvas.x,
+    y: node.canvas.y,
+    width: NODE_WIDTH,
+    height: DIALOGUE_NODE_BASE_HEIGHT + choiceListHeight
+  };
+}
+
+function getChoicePreviewHeight(choice: DialogueChoice): number {
+  const chipCount = Number(Boolean(choice.visibilityCheck)) + Number(Boolean(choice.resolutionCheck)) + Number(Boolean(choice.eventName?.trim()));
+  const extraChipRows = chipCount > 2 ? Math.ceil((chipCount - 2) / 2) : 0;
+  return CHOICE_PREVIEW_HEIGHT + extraChipRows * CHOICE_PREVIEW_EXTRA_CHIP_ROW;
 }
 
 export function resolveNodePortraits(project: DialogueProject, nodeId: string, trail = new Set<string>()): { left?: string; right?: string } {
@@ -985,6 +1098,13 @@ export function deriveEdges(project: DialogueProject): Edge[] {
   const edges: DraftEdge[] = [];
   const terminalPosition = getTerminalNodePosition(project);
   const routeHandleDirections = getRouteHandleDirections(project, terminalPosition);
+  const skillGroups = deriveSkillGroupLayouts(project);
+  const skillGroupByNodeId = new Map<string, SkillGroupLayout>();
+  const skillGroupByChoiceKey = new Map<string, SkillGroupLayout>();
+  skillGroups.forEach((group) => {
+    skillGroupByChoiceKey.set(`${group.sourceNodeId}:${group.choiceId}`, group);
+    group.nodeIds.forEach((nodeId) => skillGroupByNodeId.set(nodeId, group));
+  });
 
   const pushEdge = (edge: Edge, sourceSide: HandleSide, targetSide: HandleSide, sourcePoint: { x: number; y: number }, targetPoint: { x: number; y: number }) => {
     edges.push({ edge, sourceSide, targetSide, sourcePoint, targetPoint });
@@ -1051,6 +1171,37 @@ export function deriveEdges(project: DialogueProject): Edge[] {
         return;
       }
 
+      const resolutionGroup = skillGroupByChoiceKey.get(`${node.id}:${choice.id}`);
+      if (resolutionGroup) {
+        const sourceSide = routeHandleDirections[node.id]?.[choiceHandleId(choice.id, 'skill')] ?? 'bottom';
+        const targetPoint = {
+          x: resolutionGroup.position.x + resolutionGroup.width / 2,
+          y: resolutionGroup.position.y + resolutionGroup.height / 2
+        };
+        const targetSide = getRouteAnchorSide(targetPoint, node.canvas);
+
+        pushEdge({
+          id: `${node.id}:${choice.id}:skill-group`,
+          source: dialogueCanvasId(node.id),
+          sourceHandle: choiceHandleId(choice.id, 'skill'),
+          target: resolutionGroup.id,
+          targetHandle: getTargetHandleId(targetSide),
+          label: `${choice.text} (${resolution.skill})`,
+          className: 'edge-skill-group',
+          type: 'dialogue',
+          animated: true,
+          style: {
+            stroke: choice.color,
+            strokeWidth: 2
+          },
+          data: {
+            nodeId: node.id,
+            choiceId: choice.id,
+            sourceSide
+          }
+        }, sourceSide, targetSide, node.canvas, targetPoint);
+      }
+
       const routes: Array<[RouteBranch, string | undefined]> = [
         ['failure', resolution.failureNodeId],
         ['success', resolution.successNodeId],
@@ -1065,18 +1216,28 @@ export function deriveEdges(project: DialogueProject): Edge[] {
         if (!targetNode) {
           return;
         }
+        if (resolutionGroup?.nodeIds.includes(target)) {
+          return;
+        }
         const sourceSide = routeHandleDirections[node.id]?.[choiceHandleId(choice.id, branch)] ?? 'bottom';
-        const targetSide = getRouteAnchorSide(targetNode.canvas, node.canvas);
+        const targetGroup = skillGroupByNodeId.get(target);
+        const targetPoint = targetGroup
+          ? {
+              x: targetGroup.position.x + targetGroup.width / 2,
+              y: targetGroup.position.y + targetGroup.height / 2
+            }
+          : targetNode.canvas;
+        const targetSide = getRouteAnchorSide(targetPoint, node.canvas);
         pushEdge({
           id: `${node.id}:${choice.id}:${branch}`,
           source: dialogueCanvasId(node.id),
           sourceHandle: choiceHandleId(choice.id, branch),
-          target: dialogueCanvasId(target),
+          target: targetGroup ? targetGroup.id : dialogueCanvasId(target),
           targetHandle: getTargetHandleId(targetSide),
           label: `${choice.text} (${branch})`,
           className: `edge-${branch}`,
           type: 'dialogue',
-          animated: branch !== 'failure',
+          animated: true,
           style: {
             stroke: choice.color,
             strokeWidth: 2
@@ -1087,7 +1248,7 @@ export function deriveEdges(project: DialogueProject): Edge[] {
             branch,
             sourceSide
           }
-        }, sourceSide, targetSide, node.canvas, targetNode.canvas);
+        }, sourceSide, targetSide, node.canvas, targetPoint);
       });
     });
   });

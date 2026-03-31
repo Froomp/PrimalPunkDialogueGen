@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { BaseEdge, EdgeLabelRenderer, Position, type EdgeProps } from '@xyflow/react';
 
 type Point = {
@@ -60,7 +61,7 @@ function buildDialoguePath(
   };
 }
 
-export function DialogueEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, label, style, markerEnd, data }: EdgeProps) {
+function DialogueEdgeComponent({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, label, style, markerEnd, data }: EdgeProps) {
   const laneOffset = Number((data as { laneOffset?: number } | undefined)?.laneOffset ?? 0);
   const { path, labelX, labelY } = buildDialoguePath(sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, laneOffset);
 
@@ -83,3 +84,5 @@ export function DialogueEdge({ id, sourceX, sourceY, targetX, targetY, sourcePos
     </>
   );
 }
+
+export const DialogueEdge = memo(DialogueEdgeComponent);

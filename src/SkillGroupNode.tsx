@@ -2,9 +2,10 @@ import { memo, type CSSProperties } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { getTargetHandleId, type HandleSide } from './dialogue';
 
-type TerminalNodeData = {
+type SkillGroupNodeData = {
   label: string;
-  subtitle?: string;
+  subtitle: string;
+  count: number;
   dimmed?: boolean;
 };
 
@@ -23,32 +24,35 @@ function getHandlePosition(side: HandleSide): Position {
   return Position.Bottom;
 }
 
-function TerminalNodeComponent({ data, dragging }: NodeProps) {
-  const terminalData = data as TerminalNodeData;
+function SkillGroupNodeComponent({ data, dragging }: NodeProps) {
+  const groupData = data as SkillGroupNodeData;
 
   return (
     <article
-      className={`terminal-node ${dragging ? 'is-dragging' : ''} ${terminalData.dimmed ? 'is-dimmed' : ''}`}
+      className={`skill-group-node ${dragging ? 'is-dragging' : ''} ${groupData.dimmed ? 'is-dimmed' : ''}`}
       style={
         {
-          '--terminal-accent': '#8b5cf6'
+          '--skill-group-accent': '#3c7d70'
         } as CSSProperties
       }
     >
       {targetHandleSides.map((side) => (
         <Handle
           key={side}
-          className={`route-target route-target--terminal route-target--${side}`}
+          className={`route-target route-target--group route-target--hidden route-target--${side}`}
           id={getTargetHandleId(side)}
           isConnectableStart={false}
           position={getHandlePosition(side)}
           type="target"
         />
       ))}
-      <div className="terminal-node__label">{terminalData.label}</div>
-      {terminalData.subtitle ? <div className="terminal-node__subtitle">{terminalData.subtitle}</div> : null}
+      <div className="skill-group-node__header">
+        <strong>{groupData.label}</strong>
+        <span>{groupData.count} outcomes</span>
+      </div>
+      <div className="skill-group-node__subtitle">{groupData.subtitle}</div>
     </article>
   );
 }
 
-export const TerminalNode = memo(TerminalNodeComponent);
+export const SkillGroupNode = memo(SkillGroupNodeComponent);

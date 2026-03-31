@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
-import { Background, Controls, ReactFlow, ReactFlowProvider, type Connection, type Edge, type Node, useReactFlow, type OnConnectEnd, type XYPosition } from '@xyflow/react';
+import { Background, Controls, MarkerType, ReactFlow, ReactFlowProvider, useNodesState, type Connection, type Edge, type Node, useReactFlow, type OnConnectEnd, type XYPosition } from '@xyflow/react';
 import { DialogueEdge } from './DialogueEdge';
 import { GraphNode } from './GraphNode';
 import { PreviewDialog } from './PreviewDialog';
+import { SkillGroupNode } from './SkillGroupNode';
 import { TerminalNode } from './TerminalNode';
 import {
   compileRuntime,
   createDefaultProject,
+  deriveSkillGroupLayouts,
   deriveEdges,
   dialogueCanvasId,
   getCloseRouteSummary,
@@ -21,6 +23,7 @@ import {
   skillIds,
   slugify,
   terminalCanvasId,
+  type SkillGroupLayout,
   type DialogueChoice,
   type DialogueNode,
   type DialogueProject,
@@ -33,12 +36,49 @@ import { validateProject } from './validation';
 
 const nodeTypes = {
   dialogueNode: GraphNode,
+  skillGroupNode: SkillGroupNode,
   terminalNode: TerminalNode
 };
 
 const edgeTypes = {
   dialogue: DialogueEdge
 };
+
+const defaultEdgeOptions = {
+  markerEnd: {
+    type: MarkerType.ArrowClosed,
+    width: 12,
+    height: 12,
+    color: '#d8cfee'
+  }
+} as const;
+
+function getAbsoluteCanvasPosition(node: Node, nodeById: Map<string, Node>): XYPosition {
+  if (!node.parentId) {
+    return node.position;
+  }
+
+  const parentNode = nodeById.get(node.parentId);
+  if (!parentNode) {
+    return node.position;
+  }
+
+  const parentPosition = getAbsoluteCanvasPosition(parentNode, nodeById);
+  return {
+    x: parentPosition.x + node.position.x,
+    y: parentPosition.y + node.position.y
+  };
+}
+
+function getSkillGroupNodeMembership(skillGroupLayouts: SkillGroupLayout[]) {
+  const membership = new Map<string, SkillGroupLayout>();
+
+  skillGroupLayouts.forEach((group) => {
+    group.nodeIds.forEach((nodeId) => membership.set(nodeId, group));
+  });
+
+  return membership;
+}
 
 function EditorCanvas() {
   const reactFlow = useReactFlow();
@@ -81,6 +121,7 @@ function EditorCanvas() {
   const updateNodeId = useProjectStore((state) => state.updateNodeId);
   const setNodeHidden = useProjectStore((state) => state.setNodeHidden);
   const setNodePosition = useProjectStore((state) => state.setNodePosition);
+  const moveNodes = useProjectStore((state) => state.moveNodes);
   const setTerminalPosition = useProjectStore((state) => state.setTerminalPosition);
   const addChoice = useProjectStore((state) => state.addChoice);
   const removeChoice = useProjectStore((state) => state.removeChoice);
@@ -109,10 +150,12 @@ function EditorCanvas() {
 
   const issues = useMemo(() => validateProject(project), [project]);
   const errors = issues.filter((issue) => issue.severity === 'error');
-  const warnings = issues.filter((issue) => issue.severity === 'warning');
   const terminalPosition = useMemo(() => getTerminalNodePosition(project), [project]);
   const closeRouteSummary = useMemo(() => getCloseRouteSummary(project), [project]);
   const routeHandleDirections = useMemo(() => getRouteHandleDirections(project, terminalPosition), [project, terminalPosition]);
+  const skillGroupLayouts = useMemo(() => deriveSkillGroupLayouts(project), [project]);
+  const skillGroupById = useMemo(() => new Map(skillGroupLayouts.map((group) => [group.id, group])), [skillGroupLayouts]);
+  const skillGroupByNodeId = useMemo(() => getSkillGroupNodeMembership(skillGroupLayouts), [skillGroupLayouts]);
   const focusScope = useMemo(() => {
     if (!focusChoice) {
       return undefined;
@@ -120,20 +163,48 @@ function EditorCanvas() {
     return getChoiceFocusScope(project, focusChoice.nodeId, focusChoice.choiceId);
   }, [focusChoice, project]);
 
-  const nodes = useMemo<Node[]>(
+  const canvasNodes = useMemo<Node[]>(
     () => {
-      const dialogueNodes: Node[] = Object.values(project.nodes).map((node) => ({
-        id: dialogueCanvasId(node.id),
-        type: 'dialogueNode',
-        position: node.canvas,
+      const skillGroupNodes: Node[] = skillGroupLayouts.map((group) => ({
+        id: group.id,
+        type: 'skillGroupNode',
+        position: group.position,
+        draggable: true,
+        selectable: false,
         data: {
-          node,
-          accentColor: getNodeAccentColor(project, node.id),
-          routeHandleDirections: routeHandleDirections[node.id] ?? {},
-          dimmed: Boolean(focusScope) && !focusScope?.nodeIds.has(node.id)
+          label: group.label,
+          subtitle: group.subtitle,
+          count: group.nodeIds.length,
+          dimmed: Boolean(focusScope) && !group.nodeIds.some((nodeId) => focusScope?.nodeIds.has(nodeId))
         },
-        selected: selection.kind !== 'scene' && selection.nodeId === node.id
+        style: {
+          width: group.width,
+          height: group.height
+        }
       }));
+
+      const dialogueNodes: Node[] = Object.values(project.nodes).map((node) => {
+        const group = skillGroupByNodeId.get(node.id);
+
+        return {
+          id: dialogueCanvasId(node.id),
+          type: 'dialogueNode',
+          position: group
+            ? {
+                x: node.canvas.x - group.position.x,
+                y: node.canvas.y - group.position.y
+              }
+            : node.canvas,
+          parentId: group?.id,
+          data: {
+            node,
+            accentColor: getNodeAccentColor(project, node.id),
+            routeHandleDirections: routeHandleDirections[node.id] ?? {},
+            dimmed: Boolean(focusScope) && !focusScope?.nodeIds.has(node.id)
+          },
+          selected: selection.kind !== 'scene' && selection.nodeId === node.id
+        };
+      });
 
       const terminalNodes: Node[] =
         terminalPosition && closeRouteSummary.count > 0
@@ -158,19 +229,35 @@ function EditorCanvas() {
             ]
           : [];
 
-      return [...dialogueNodes, ...terminalNodes];
+      return [...skillGroupNodes, ...dialogueNodes, ...terminalNodes];
     },
-    [closeRouteSummary, focusScope, project, routeHandleDirections, selection, terminalPosition]
+    [closeRouteSummary, focusScope, project, routeHandleDirections, selection, skillGroupByNodeId, skillGroupLayouts, terminalPosition]
   );
+  const [nodes, setNodes, onNodesChange] = useNodesState(canvasNodes);
+  const nodesRef = useRef<Node[]>(canvasNodes);
+
+  useEffect(() => {
+    setNodes(canvasNodes);
+  }, [canvasNodes, setNodes]);
+
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
 
   const edges = useMemo<Edge[]>(
     () =>
       deriveEdges(project).map((edge) => {
         const sourceNodeId = edge.source.replace(/^dialogue:/, '');
         const targetIsTerminal = edge.target === terminalCanvasId();
+        const targetGroup = skillGroupById.get(edge.target);
         const inFocus =
           !focusScope ||
-          (focusScope.nodeIds.has(sourceNodeId) && (targetIsTerminal ? focusScope.includeTerminal : focusScope.nodeIds.has(edge.target.replace(/^dialogue:/, ''))));
+          (focusScope.nodeIds.has(sourceNodeId) &&
+            (targetIsTerminal
+              ? focusScope.includeTerminal
+              : targetGroup
+                ? targetGroup.nodeIds.some((nodeId) => focusScope.nodeIds.has(nodeId))
+                : focusScope.nodeIds.has(edge.target.replace(/^dialogue:/, ''))));
 
         return {
           ...edge,
@@ -180,7 +267,7 @@ function EditorCanvas() {
           }
         };
       }),
-    [focusScope, project]
+    [focusScope, project, skillGroupById]
   );
 
   async function handleExport() {
@@ -357,33 +444,6 @@ function EditorCanvas() {
 
         <div className="panel">
           <div className="panel-header">
-            <strong>Validation</strong>
-            <span>
-              {errors.length} errors / {warnings.length} warnings
-            </span>
-          </div>
-          <div className="issue-list">
-            {issues.map((issue) => (
-              <button
-                className={`issue issue--${issue.severity}`}
-                key={`${issue.code}-${issue.message}`}
-                onClick={() => {
-                  if (issue.nodeId) {
-                    setSelection({ kind: 'node', nodeId: issue.nodeId });
-                  }
-                }}
-                type="button"
-              >
-                <strong>{issue.severity}</strong>
-                <span>{issue.message}</span>
-              </button>
-            ))}
-            {issues.length === 0 && <p className="muted-copy">Graph is valid and ready to export.</p>}
-          </div>
-        </div>
-
-        <div className="panel">
-          <div className="panel-header">
             <strong>Reset</strong>
           </div>
           <button
@@ -422,6 +482,9 @@ function EditorCanvas() {
             fitView
             nodes={nodes}
             nodeTypes={nodeTypes}
+            defaultEdgeOptions={defaultEdgeOptions}
+            onlyRenderVisibleElements
+            onNodesChange={onNodesChange}
             onConnect={handleConnect}
             onConnectEnd={handleConnectEnd}
             onEdgeClick={(_, edge) => {
@@ -436,6 +499,9 @@ function EditorCanvas() {
               if (node.id === terminalCanvasId()) {
                 return;
               }
+              if (node.id.startsWith('skill-group:')) {
+                return;
+              }
               if (!node.id.startsWith('dialogue:')) {
                 return;
               }
@@ -446,25 +512,28 @@ function EditorCanvas() {
               setFocusChoice(undefined);
               setSelection({ kind: 'node', nodeId });
             }}
-            onNodeDrag={(_, node) => {
-              if (node.id === terminalCanvasId()) {
-                setTerminalPosition(node.position);
-                return;
-              }
-              if (!node.id.startsWith('dialogue:')) {
-                return;
-              }
-              setNodePosition(node.id.replace(/^dialogue:/, ''), node.position);
-            }}
             onNodeDragStop={(_, node) => {
+              const nodeById = new Map(nodesRef.current.map((currentNode) => [currentNode.id, currentNode]));
+
               if (node.id === terminalCanvasId()) {
                 setTerminalPosition(node.position);
+                return;
+              }
+              if (node.id.startsWith('skill-group:')) {
+                const group = skillGroupById.get(node.id);
+                if (!group) {
+                  return;
+                }
+                moveNodes(group.nodeIds, {
+                  x: node.position.x - group.position.x,
+                  y: node.position.y - group.position.y
+                });
                 return;
               }
               if (!node.id.startsWith('dialogue:')) {
                 return;
               }
-              setNodePosition(node.id.replace(/^dialogue:/, ''), node.position);
+              setNodePosition(node.id.replace(/^dialogue:/, ''), getAbsoluteCanvasPosition(node, nodeById));
             }}
             onPaneClick={() => {
               setPendingCreateLink(undefined);
@@ -476,6 +545,36 @@ function EditorCanvas() {
             <Controls />
             <Background color="#40325c" gap={18} size={1} />
           </ReactFlow>
+          {errors.length > 0 && (
+            <div className="canvas-alert canvas-alert--error">
+              <div className="panel-header">
+                <strong>Validation Errors</strong>
+                <span>{errors.length}</span>
+              </div>
+              <div className="issue-list">
+                {errors.map((issue) => (
+                  <button
+                    className={`issue issue--${issue.severity}`}
+                    key={`${issue.code}-${issue.message}`}
+                    onClick={() => {
+                      setFocusChoice(undefined);
+                      if (issue.nodeId && issue.choiceId) {
+                        setSelection({ kind: 'choice', nodeId: issue.nodeId, choiceId: issue.choiceId });
+                        return;
+                      }
+                      if (issue.nodeId) {
+                        setSelection({ kind: 'node', nodeId: issue.nodeId });
+                      }
+                    }}
+                    type="button"
+                  >
+                    <strong>{issue.severity}</strong>
+                    <span>{issue.message}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </main>
 

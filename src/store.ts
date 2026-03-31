@@ -51,6 +51,7 @@ type ProjectStore = {
   updateNodeId: (nodeId: string, nextId: string) => void;
   setNodeHidden: (nodeId: string, hidden: boolean) => void;
   setNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
+  moveNodes: (nodeIds: string[], delta: { x: number; y: number }) => void;
   setTerminalPosition: (position: { x: number; y: number }) => void;
   setChoicePosition: (nodeId: string, choiceId: string, position: { x: number; y: number }) => void;
   addChoice: (nodeId: string) => void;
@@ -248,9 +249,61 @@ export const useProjectStore = create<ProjectStore>((set) => ({
       project: updateNode(state.project, nodeId, (node) => ({ ...node, hidden }))
     })),
   setNodePosition: (nodeId, position) =>
-    set((state) => ({
-      project: updateNode(state.project, nodeId, (node) => ({ ...node, canvas: position }))
-    })),
+    set((state) => {
+      const node = state.project.nodes[nodeId];
+      if (!node || (node.canvas.x === position.x && node.canvas.y === position.y)) {
+        return {};
+      }
+
+      return {
+        project: {
+          ...state.project,
+          nodes: {
+            ...state.project.nodes,
+            [nodeId]: {
+              ...node,
+              canvas: position
+            }
+          }
+        }
+      };
+    }),
+  moveNodes: (nodeIds, delta) =>
+    set((state) => {
+      if (delta.x === 0 && delta.y === 0) {
+        return {};
+      }
+
+      const nextNodes = { ...state.project.nodes };
+      let changed = false;
+
+      nodeIds.forEach((nodeId) => {
+        const node = state.project.nodes[nodeId];
+        if (!node) {
+          return;
+        }
+
+        nextNodes[nodeId] = {
+          ...node,
+          canvas: {
+            x: node.canvas.x + delta.x,
+            y: node.canvas.y + delta.y
+          }
+        };
+        changed = true;
+      });
+
+      if (!changed) {
+        return {};
+      }
+
+      return {
+        project: {
+          ...state.project,
+          nodes: nextNodes
+        }
+      };
+    }),
   setTerminalPosition: (position) =>
     set((state) => ({
       project: {

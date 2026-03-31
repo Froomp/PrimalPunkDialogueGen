@@ -1,4 +1,4 @@
-import type { CSSProperties, MouseEvent } from 'react';
+import { memo, type CSSProperties, type MouseEvent } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { FiPlus } from 'react-icons/fi';
 import { choiceHandleId, getSkillColor, getTargetHandleId, type DialogueChoice, type DialogueNode, type DisplayBranch, type HandleSide, type RouteHandleDirectionMap } from './dialogue';
@@ -17,6 +17,7 @@ type RouteHandle = {
   side: HandleSide;
   crossAxis: number;
   offset: number;
+  hidden?: boolean;
 };
 
 function buildRouteHandles(node: DialogueNode, routeHandleDirections: RouteHandleDirectionMap): RouteHandle[] {
@@ -42,13 +43,26 @@ function buildRouteHandles(node: DialogueNode, routeHandleDirections: RouteHandl
     };
     const offsets = offsetsByCount[branches.length] ?? [0];
 
-    return branches.map((branch, branchIndex) => ({
+    const handles: RouteHandle[] = branches.map((branch, branchIndex) => ({
       id: choiceHandleId(choice.id, branch),
       branch,
       side: routeHandleDirections[choiceHandleId(choice.id, branch)] ?? 'bottom',
       crossAxis,
       offset: offsets[branchIndex] ?? 0
     }));
+
+    if (choice.resolutionCheck) {
+      handles.push({
+        id: choiceHandleId(choice.id, 'skill'),
+        branch: 'skill',
+        side: routeHandleDirections[choiceHandleId(choice.id, 'skill')] ?? 'bottom',
+        crossAxis,
+        offset: 0,
+        hidden: true
+      });
+    }
+
+    return handles;
   });
 }
 
@@ -87,6 +101,7 @@ function getRouteHandleStyle(routeHandle: RouteHandle): CSSProperties {
 }
 
 const targetHandleSides: HandleSide[] = ['top', 'right', 'bottom', 'left'];
+const visibleTargetHandleSides = new Set<HandleSide>(['bottom']);
 
 function getHandlePosition(side: HandleSide): Position {
   if (side === 'top') {
@@ -140,7 +155,7 @@ function getChoiceCheckChips(choice: DialogueChoice): Array<{ id: string; label:
   return chips;
 }
 
-export function GraphNode({ data, selected }: NodeProps) {
+function GraphNodeComponent({ data, selected, dragging }: NodeProps) {
   const nodeData = data as GraphNodeData;
   const setSelection = useProjectStore((state) => state.setSelection);
   const setFocusChoice = useProjectStore((state) => state.setFocusChoice);
@@ -179,7 +194,7 @@ export function GraphNode({ data, selected }: NodeProps) {
 
   return (
     <article
-      className={`dialogue-node dialogue-node--parent ${selected ? 'is-selected' : ''} ${nodeData.node.hidden ? 'is-hidden' : ''} ${nodeData.dimmed ? 'is-dimmed' : ''}`}
+      className={`dialogue-node dialogue-node--parent ${selected ? 'is-selected' : ''} ${dragging ? 'is-dragging' : ''} ${nodeData.node.hidden ? 'is-hidden' : ''} ${nodeData.dimmed ? 'is-dimmed' : ''}`}
       style={
         {
           '--node-accent': nodeData.accentColor ?? '#6b4fc0'
@@ -189,7 +204,7 @@ export function GraphNode({ data, selected }: NodeProps) {
         {targetHandleSides.map((side) => (
         <Handle
           key={side}
-          className={`route-target route-target--${side}`}
+          className={`route-target route-target--${side}${visibleTargetHandleSides.has(side) ? '' : ' route-target--hidden'}`}
           id={getTargetHandleId(side)}
           isConnectableStart
           position={getHandlePosition(side)}
@@ -267,7 +282,7 @@ export function GraphNode({ data, selected }: NodeProps) {
       {routeHandles.map((routeHandle) => (
         <Handle
           key={routeHandle.id}
-          className={`route-handle route-handle--${routeHandle.branch}`}
+          className={`route-handle route-handle--${routeHandle.branch}${routeHandle.hidden ? ' route-handle--ghost' : ''}`}
           id={routeHandle.id}
           position={getHandlePosition(routeHandle.side)}
           style={getRouteHandleStyle(routeHandle)}
@@ -277,3 +292,5 @@ export function GraphNode({ data, selected }: NodeProps) {
     </article>
   );
 }
+
+export const GraphNode = memo(GraphNodeComponent);

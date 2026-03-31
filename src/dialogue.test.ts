@@ -2,6 +2,7 @@ import {
   collectCascadeDeleteNodeIds,
   createDefaultProject,
   deleteNodesFromProject,
+  deriveSkillGroupLayouts,
   deriveEdges,
   getChoiceFocusScope,
   getRouteAnchorSide,
@@ -117,5 +118,25 @@ describe('dialogue routing', () => {
 
     expect(scope.nodeIds).toEqual(new Set(['parent', 'right']));
     expect(scope.includeTerminal).toBe(true);
+  });
+
+  it('draws a single active skill-check edge to the grouped outcome panel', () => {
+    const project = createDefaultProject();
+    const resolutionEdges = deriveEdges(project).filter((edge) => edge.data?.choiceId === 'choice_bash');
+
+    expect(resolutionEdges).toHaveLength(1);
+    expect(resolutionEdges[0]?.animated).toBe(true);
+    expect(resolutionEdges[0]?.target).toBe('skill-group:start:choice_bash');
+  });
+
+  it('derives a visual skill group around active-check outcome cards', () => {
+    const project = createDefaultProject();
+    const groups = deriveSkillGroupLayouts(project);
+    const bashGroup = groups.find((group) => group.choiceId === 'choice_bash');
+
+    expect(bashGroup).toBeDefined();
+    expect(bashGroup?.nodeIds).toEqual(['bash_fail', 'bash_success', 'bash_critical']);
+    expect(bashGroup?.width).toBeGreaterThan(0);
+    expect(bashGroup?.height).toBeGreaterThan(0);
   });
 });
