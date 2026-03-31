@@ -6,6 +6,7 @@ import {
   createConnectedNodeProject,
   createDefaultProject,
   createNode,
+  createUniqueNodeId,
   deleteNodesFromProject,
   deepClone,
   getChoiceCanvasPosition,
@@ -39,6 +40,7 @@ type ProjectStore = {
   setFocusChoice: (focusChoice: FocusChoice) => void;
   setPreviewOpen: (open: boolean) => void;
   resetProject: () => void;
+  clearScene: () => void;
   setSceneField: (field: 'sceneId' | 'title' | 'startNodeId', value: string) => void;
   addNode: () => void;
   duplicateNode: (nodeId: string) => void;
@@ -52,7 +54,19 @@ type ProjectStore = {
   addChoice: (nodeId: string) => void;
   removeChoice: (nodeId: string, choiceId: string) => void;
   updateChoice: (nodeId: string, choiceId: string, updater: (choice: DialogueChoice) => DialogueChoice) => void;
-  createConnectedNode: (nodeId: string, choiceId: string, branch: RouteBranch) => void;
+  createChoiceWithNode: (
+    parentNodeId: string,
+    input: {
+      choiceText: string;
+      targetNodeId?: string;
+      newNode?: {
+        preferredId?: string;
+        text: string;
+        position: { x: number; y: number };
+      };
+    }
+  ) => { choiceId: string; nodeId?: string };
+  createConnectedNode: (nodeId: string, choiceId: string, branch: RouteBranch, position?: { x: number; y: number }) => void;
   connectRoute: (nodeId: string, choiceId: string, branch: RouteBranch, targetNodeId?: string) => void;
   clearEdge: (nodeId: string, choiceId: string, branch: RouteBranch) => void;
   deleteNode: (nodeId: string, cascadeChildren?: boolean) => void;
@@ -88,6 +102,24 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   setFocusChoice: (focusChoice) => set({ focusChoice }),
   setPreviewOpen: (previewOpen) => set({ previewOpen }),
   resetProject: () => set({ project: normalizeProject(createDefaultProject()), selection: { kind: 'scene' }, focusChoice: undefined, previewOpen: false }),
+  clearScene: () =>
+    set((state) => {
+      const startNode = createNode({ x: 120, y: 120 }, 'start');
+
+      return {
+        project: normalizeProject({
+          ...state.project,
+          startNodeId: startNode.id,
+          nodes: {
+            [startNode.id]: startNode
+          },
+          terminal: undefined
+        }),
+        selection: { kind: 'node', nodeId: startNode.id },
+        focusChoice: undefined,
+        previewOpen: false
+      };
+    }),
   setSceneField: (field, value) =>
     set((state) => ({
       project: {
@@ -226,19 +258,27 @@ export const useProjectStore = create<ProjectStore>((set) => ({
       project: updateChoice(state.project, nodeId, choiceId, (choice) => ({ ...choice, canvas: position }))
     })),
   addChoice: (nodeId) =>
-    set((state) => ({
-      project: updateNode(state.project, nodeId, (node) => ({
-        ...node,
-        choices: [
-          ...node.choices,
-          createChoice(
-            'New option',
-            getChoiceCanvasPosition(node.canvas, node.choices.length, node.choices.length + 1),
-            pickChoiceColor(node.choices.map((choice) => choice.color).filter((color): color is string => Boolean(color)))
-          )
-        ]
-      }))
-    })),
+    set((state) => {
+      const node = state.project.nodes[nodeId];
+      if (!node) {
+        return {};
+      }
+
+      const choice = createChoice(
+        'New option',
+        getChoiceCanvasPosition(node.canvas, node.choices.length, node.choices.length + 1),
+        pickChoiceColor(node.choices.map((choice) => choice.color).filter((color): color is string => Boolean(color)))
+      );
+
+      return {
+        project: updateNode(state.project, nodeId, (currentNode) => ({
+          ...currentNode,
+          choices: [...currentNode.choices, choice]
+        })),
+        selection: { kind: 'choice', nodeId, choiceId: choice.id },
+        focusChoice: { nodeId, choiceId: choice.id }
+      };
+    }),
   removeChoice: (nodeId, choiceId) =>
     set((state) => ({
       project: updateNode(state.project, nodeId, (node) => ({
@@ -251,9 +291,47 @@ export const useProjectStore = create<ProjectStore>((set) => ({
     set((state) => ({
       project: updateChoice(state.project, nodeId, choiceId, updater)
     })),
-  createConnectedNode: (nodeId, choiceId, branch) =>
+  createChoiceWithNode: (parentNodeId, input) => {
+    let created = { choiceId: '', nodeId: undefined as string | undefined };
+
     set((state) => {
-      const result = createConnectedNodeProject(state.project, nodeId, choiceId, branch);
+      const nextProject = deepClone(state.project);
+      const parentNode = nextProject.nodes[parentNodeId];
+      if (!parentNode) {
+        return {};
+      }
+
+      let targetNodeId = input.targetNodeId;
+      if (input.newNode) {
+        const nextNodeId = createUniqueNodeId(nextProject, input.newNode.preferredId);
+        const nextNode = createNode(input.newNode.position, nextNodeId);
+        nextNode.text = input.newNode.text.trim() || nextNode.text;
+        nextProject.nodes[nextNodeId] = nextNode;
+        targetNodeId = nextNodeId;
+        created.nodeId = nextNodeId;
+      }
+
+      const choice = createChoice(
+        input.choiceText.trim() || 'New option',
+        getChoiceCanvasPosition(parentNode.canvas, parentNode.choices.length, parentNode.choices.length + 1),
+        pickChoiceColor(parentNode.choices.map((choice) => choice.color).filter((color): color is string => Boolean(color)))
+      );
+      choice.nextNodeId = targetNodeId;
+      parentNode.choices.push(choice);
+      created.choiceId = choice.id;
+
+      return {
+        project: nextProject,
+        selection: created.nodeId ? { kind: 'node', nodeId: created.nodeId } : { kind: 'choice', nodeId: parentNodeId, choiceId: choice.id },
+        focusChoice: { nodeId: parentNodeId, choiceId: choice.id }
+      };
+    });
+
+    return created;
+  },
+  createConnectedNode: (nodeId, choiceId, branch, position) =>
+    set((state) => {
+      const result = createConnectedNodeProject(state.project, nodeId, choiceId, branch, position);
       return {
         project: result.project,
         selection: { kind: 'node', nodeId: result.newNodeId }

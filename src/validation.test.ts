@@ -27,4 +27,13 @@ describe('validateProject', () => {
 
     expect(issues.some((issue) => issue.code === 'critical-falls-back')).toBe(true);
   });
+
+  it('errors when a node has no exit routes', () => {
+    const project = createDefaultProject();
+    project.nodes.start.choices = [];
+
+    const issues = validateProject(project);
+
+    expect(issues.some((issue) => issue.code === 'dead-end-node' && issue.nodeId === 'start')).toBe(true);
+  });
 });

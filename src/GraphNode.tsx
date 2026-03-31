@@ -1,5 +1,6 @@
-import type { CSSProperties } from 'react';
+import type { CSSProperties, MouseEvent } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { FiPlus } from 'react-icons/fi';
 import { choiceHandleId, getSkillColor, getTargetHandleId, type DialogueChoice, type DialogueNode, type DisplayBranch, type HandleSide, type RouteHandleDirectionMap } from './dialogue';
 import { useProjectStore } from './store';
 
@@ -20,18 +21,9 @@ type RouteHandle = {
 
 function buildRouteHandles(node: DialogueNode, routeHandleDirections: RouteHandleDirectionMap): RouteHandle[] {
   return node.choices.flatMap((choice, index) => {
-    const branches: DisplayBranch[] = [];
-    if (choice.nextNodeId) {
-      branches.push('next');
-    }
-    if (choice.resolutionCheck?.failureNodeId) {
-      branches.push('failure');
-    }
-    if (choice.resolutionCheck?.successNodeId) {
-      branches.push('success');
-    }
-    if (choice.resolutionCheck?.criticalSuccessNodeId) {
-      branches.push('critical');
+    const branches: DisplayBranch[] = ['next'];
+    if (choice.resolutionCheck) {
+      branches.push('failure', 'success', 'critical');
     }
     if (choice.close) {
       branches.push('close');
@@ -139,18 +131,19 @@ export function GraphNode({ data, selected }: NodeProps) {
   const setFocusChoice = useProjectStore((state) => state.setFocusChoice);
   const addChoice = useProjectStore((state) => state.addChoice);
   const setNodeHidden = useProjectStore((state) => state.setNodeHidden);
-  const duplicateNode = useProjectStore((state) => state.duplicateNode);
   const deleteNode = useProjectStore((state) => state.deleteNode);
   const routeHandles = buildRouteHandles(nodeData.node, nodeData.routeHandleDirections);
 
-  function focusChoice(choiceId: string) {
+  function focusChoice(event: MouseEvent<HTMLButtonElement>, choiceId: string) {
+    event.stopPropagation();
     if (nodeData.node.hidden) {
       setNodeHidden(nodeData.node.id, false);
     }
     setFocusChoice({ nodeId: nodeData.node.id, choiceId });
   }
 
-  function openChoice(choiceId: string) {
+  function openChoice(event: MouseEvent<HTMLButtonElement>, choiceId: string) {
+    event.stopPropagation();
     if (nodeData.node.hidden) {
       setNodeHidden(nodeData.node.id, false);
     }
@@ -177,9 +170,18 @@ export function GraphNode({ data, selected }: NodeProps) {
           '--node-accent': nodeData.accentColor ?? '#6b4fc0'
         } as CSSProperties
       }
-    >
-      {targetHandleSides.map((side) => (
-        <Handle key={side} className={`route-target route-target--${side}`} id={getTargetHandleId(side)} position={getHandlePosition(side)} type="target" />
+      >
+        {targetHandleSides.map((side) => (
+        <Handle
+          key={side}
+          className={`route-target route-target--${side}`}
+          id={getTargetHandleId(side)}
+          isConnectableStart
+          position={getHandlePosition(side)}
+          type="target"
+        >
+          <FiPlus aria-hidden="true" className="route-target__icon" />
+        </Handle>
       ))}
 
       <div className="dialogue-node__header">
@@ -196,9 +198,6 @@ export function GraphNode({ data, selected }: NodeProps) {
         <div className="dialogue-node__actions">
           <button className="ghost-button nodrag nopan" onClick={() => setNodeHidden(nodeData.node.id, !nodeData.node.hidden)} type="button">
             {nodeData.node.hidden ? 'Focus' : 'Hide'}
-          </button>
-          <button className="ghost-button nodrag nopan" onClick={() => duplicateNode(nodeData.node.id)} type="button">
-            Duplicate
           </button>
           <button className="ghost-button danger nodrag nopan" onClick={handleDelete} type="button">
             Delete
@@ -217,15 +216,20 @@ export function GraphNode({ data, selected }: NodeProps) {
               } as CSSProperties
             }
           >
-            <button className="choice-preview__main" onClick={() => focusChoice(choice.id)} type="button">
+            <button className="choice-preview__main nodrag nopan" onClick={(event) => focusChoice(event, choice.id)} type="button">
               <span>{choice.text || 'Untitled choice'}</span>
             </button>
+            <div className="choice-preview__actions">
+              <button className="choice-preview__edit nodrag nopan" onClick={(event) => openChoice(event, choice.id)} type="button">
+                Edit
+              </button>
+            </div>
             <div className="choice-preview__checks">
               {getChoiceCheckChips(choice).map((chip) => (
                 <button
                   key={chip.id}
-                  className="skill-check-chip"
-                  onClick={() => openChoice(choice.id)}
+                  className="skill-check-chip nodrag nopan"
+                  onClick={(event) => openChoice(event, choice.id)}
                   style={{ '--skill-color': chip.color } as CSSProperties}
                   title={`${chip.label} ${chip.skill}`}
                   type="button"

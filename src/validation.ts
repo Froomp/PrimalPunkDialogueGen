@@ -43,6 +43,16 @@ function pushMissingTarget(
   });
 }
 
+function choiceHasExit(choice: DialogueProject['nodes'][string]['choices'][number]): boolean {
+  return Boolean(
+    choice.close ||
+      choice.nextNodeId ||
+      choice.resolutionCheck?.failureNodeId ||
+      choice.resolutionCheck?.successNodeId ||
+      choice.resolutionCheck?.criticalSuccessNodeId
+  );
+}
+
 export function validateProject(project: DialogueProject): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const choiceIds = new Set<string>();
@@ -159,6 +169,15 @@ export function validateProject(project: DialogueProject): ValidationIssue[] {
         }
       }
     });
+
+    if (!node.choices.some(choiceHasExit)) {
+      issues.push({
+        severity: 'error',
+        code: 'dead-end-node',
+        message: `Node "${node.id}" has no exit or connection to another card.`,
+        nodeId: node.id
+      });
+    }
   });
 
   const stack = project.nodes[project.startNodeId] ? [project.startNodeId] : [];

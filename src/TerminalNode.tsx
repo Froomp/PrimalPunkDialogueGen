@@ -36,7 +36,14 @@ export function TerminalNode({ data }: NodeProps) {
       }
     >
       {targetHandleSides.map((side) => (
-        <Handle key={side} className={`route-target route-target--${side}`} id={getTargetHandleId(side)} position={getHandlePosition(side)} type="target" />
+        <Handle
+          key={side}
+          className={`route-target route-target--terminal route-target--${side}`}
+          id={getTargetHandleId(side)}
+          isConnectableStart={false}
+          position={getHandlePosition(side)}
+          type="target"
+        />
       ))}
       <div className="terminal-node__label">{terminalData.label}</div>
       {terminalData.subtitle ? <div className="terminal-node__subtitle">{terminalData.subtitle}</div> : null}

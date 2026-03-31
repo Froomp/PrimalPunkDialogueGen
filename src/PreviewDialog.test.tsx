@@ -30,7 +30,7 @@ describe('PreviewDialog', () => {
 
     await user.click(screen.getByRole('button', { name: 'Bash the button' }));
 
-    expect(screen.getByText('You smash the button with brutal force. The mechanism triggers instantly.')).toBeInTheDocument();
+    expect(screen.getByText('You smash the button with brutal force. The mechanism triggers instantly.', { selector: '.preview-text' })).toBeInTheDocument();
 
     promptSpy.mockRestore();
   });

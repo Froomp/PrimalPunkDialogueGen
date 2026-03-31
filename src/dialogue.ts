@@ -226,6 +226,23 @@ export function slugify(value: string): string {
   );
 }
 
+export function createUniqueNodeId(project: DialogueProject, preferredId?: string): string {
+  const baseId = slugify(preferredId?.trim() || 'node');
+
+  if (!project.nodes[baseId]) {
+    return baseId;
+  }
+
+  let suffix = 2;
+  let candidate = `${baseId}_${suffix}`;
+  while (project.nodes[candidate]) {
+    suffix += 1;
+    candidate = `${baseId}_${suffix}`;
+  }
+
+  return candidate;
+}
+
 export function normalizeChoiceColor(value: string | undefined): string | undefined {
   if (!value) {
     return undefined;
@@ -721,6 +738,24 @@ export function getTargetHandleId(side: HandleSide): string {
   return `target:${side}`;
 }
 
+export function parseNodeHandle(handle: string | null | undefined): HandleSide | null {
+  if (!handle) {
+    return null;
+  }
+
+  const parts = handle.split(':');
+  if (parts.length !== 2 || parts[0] !== 'target') {
+    return null;
+  }
+
+  const side = parts[1];
+  if (side !== 'top' && side !== 'right' && side !== 'bottom' && side !== 'left') {
+    return null;
+  }
+
+  return side;
+}
+
 export type RouteHandleDirectionMap = Record<string, HandleSide>;
 
 type CloseRouteSummary = {
@@ -913,7 +948,13 @@ export function connectProjectRoute(
   return nextProject;
 }
 
-export function createConnectedNodeProject(project: DialogueProject, sourceNodeId: string, choiceId: string, branch: RouteBranch): { project: DialogueProject; newNodeId: string } {
+export function createConnectedNodeProject(
+  project: DialogueProject,
+  sourceNodeId: string,
+  choiceId: string,
+  branch: RouteBranch,
+  position?: { x: number; y: number }
+): { project: DialogueProject; newNodeId: string } {
   const nextProject = deepClone(project);
   const sourceNode = nextProject.nodes[sourceNodeId];
   const sourceChoice = sourceNode?.choices.find((choice) => choice.id === choiceId);
@@ -922,7 +963,7 @@ export function createConnectedNodeProject(project: DialogueProject, sourceNodeI
     return { project: nextProject, newNodeId: '' };
   }
 
-  const newNode = createNode(getSpawnedNodePosition(nextProject, sourceNodeId, choiceId, branch));
+  const newNode = createNode(position ?? getSpawnedNodePosition(nextProject, sourceNodeId, choiceId, branch));
 
   nextProject.nodes[newNode.id] = newNode;
 

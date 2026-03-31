@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
-import { Background, Controls, MiniMap, ReactFlow, ReactFlowProvider, type Connection, type Edge, type Node, useReactFlow } from '@xyflow/react';
+import { Background, Controls, ReactFlow, ReactFlowProvider, type Connection, type Edge, type Node, useReactFlow, type OnConnectEnd, type XYPosition } from '@xyflow/react';
 import { DialogueEdge } from './DialogueEdge';
 import { GraphNode } from './GraphNode';
 import { PreviewDialog } from './PreviewDialog';
@@ -14,11 +14,15 @@ import {
   getNodeAccentColor,
   getTerminalNodePosition,
   getRouteHandleDirections,
+  NODE_HEIGHT,
+  NODE_WIDTH,
+  parseNodeHandle,
   parseSourceHandle,
   skillIds,
   terminalCanvasId,
   type DialogueChoice,
   type DialogueNode,
+  type DialogueProject,
   type RouteBranch
 } from './dialogue';
 import { buildRuntimeZip, downloadBlob } from './exporter';
@@ -40,6 +44,24 @@ function EditorCanvas() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const importProjectRef = useRef<HTMLInputElement | null>(null);
   const [status, setStatus] = useState<string>('Autosave active');
+  const [pendingCreateLink, setPendingCreateLink] = useState<
+    | {
+        nodeId: string;
+        choiceId: string;
+        branch: RouteBranch;
+        flowPosition: XYPosition;
+        screenPosition: XYPosition;
+      }
+    | undefined
+  >(undefined);
+  const [pendingNodeLink, setPendingNodeLink] = useState<
+    | {
+        parentNodeId: string;
+        targetNodeId?: string;
+        flowPosition?: XYPosition;
+      }
+    | undefined
+  >(undefined);
 
   const project = useProjectStore((state) => state.project);
   const selection = useProjectStore((state) => state.selection);
@@ -50,6 +72,7 @@ function EditorCanvas() {
   const setFocusChoice = useProjectStore((state) => state.setFocusChoice);
   const setPreviewOpen = useProjectStore((state) => state.setPreviewOpen);
   const resetProject = useProjectStore((state) => state.resetProject);
+  const clearScene = useProjectStore((state) => state.clearScene);
   const setSceneField = useProjectStore((state) => state.setSceneField);
   const addNode = useProjectStore((state) => state.addNode);
   const updateNodeText = useProjectStore((state) => state.updateNodeText);
@@ -191,12 +214,74 @@ function EditorCanvas() {
   }
 
   function handleConnect(connection: Connection) {
+    setPendingCreateLink(undefined);
+    setPendingNodeLink(undefined);
+    const nodeHandle = parseNodeHandle(connection.sourceHandle);
+    if (nodeHandle && connection.source?.startsWith('dialogue:')) {
+      if (!connection.target?.startsWith('dialogue:')) {
+        return;
+      }
+
+      setPendingNodeLink({
+        parentNodeId: connection.source.replace(/^dialogue:/, ''),
+        targetNodeId: connection.target.replace(/^dialogue:/, '')
+      });
+      return;
+    }
+
     const parsed = parseSourceHandle(connection.sourceHandle);
     if (!connection.source || !connection.target || !parsed || !connection.target.startsWith('dialogue:')) {
       return;
     }
     connectRoute(connection.source.replace(/^dialogue:/, ''), parsed.choiceId, parsed.branch, connection.target.replace(/^dialogue:/, ''));
   }
+
+  const handleConnectEnd: OnConnectEnd = (event, connectionState) => {
+    if (!connectionState.fromHandle || connectionState.toNode || connectionState.toHandle) {
+      return;
+    }
+
+    if (!connectionState.fromNode) {
+      return;
+    }
+
+    const clientX = 'changedTouches' in event ? event.changedTouches[0]?.clientX ?? 0 : event.clientX;
+    const clientY = 'changedTouches' in event ? event.changedTouches[0]?.clientY ?? 0 : event.clientY;
+    const flowPosition =
+      connectionState.pointer ??
+      reactFlow.screenToFlowPosition({
+        x: clientX,
+        y: clientY
+      });
+
+    const nodeHandle = parseNodeHandle(connectionState.fromHandle.id);
+    if (nodeHandle && connectionState.fromNode.id.startsWith('dialogue:')) {
+      const parentNodeId = connectionState.fromNode.id.replace(/^dialogue:/, '');
+      window.setTimeout(() => {
+        setPendingNodeLink({
+          parentNodeId,
+          flowPosition
+        });
+      }, 0);
+      return;
+    }
+
+    const parsed = parseSourceHandle(connectionState.fromHandle.id);
+    if (!parsed) {
+      return;
+    }
+    const fromNodeId = connectionState.fromNode.id.replace(/^dialogue:/, '');
+
+    window.setTimeout(() => {
+      setPendingCreateLink({
+        nodeId: fromNodeId,
+        choiceId: parsed.choiceId,
+        branch: parsed.branch,
+        flowPosition,
+        screenPosition: { x: clientX, y: clientY }
+      });
+    }, 0);
+  };
 
   const selectedNode = selection.kind === 'node' || selection.kind === 'choice' || selection.kind === 'edge' ? project.nodes[selection.nodeId] : undefined;
   const selectedChoice =
@@ -218,16 +303,6 @@ function EditorCanvas() {
           <label>
             Title
             <input value={project.title ?? ''} onChange={(event) => setSceneField('title', event.target.value)} />
-          </label>
-          <label>
-            Start node
-            <select value={project.startNodeId} onChange={(event) => setSceneField('startNodeId', event.target.value)}>
-              {Object.keys(project.nodes).map((nodeId) => (
-                <option key={nodeId} value={nodeId}>
-                  {nodeId}
-                </option>
-              ))}
-            </select>
           </label>
           <div className="button-row">
             <button className="primary-button" onClick={() => addNode()} type="button">
@@ -310,6 +385,17 @@ function EditorCanvas() {
           <div className="panel-header">
             <strong>Reset</strong>
           </div>
+          <button
+            className="ghost-button danger"
+            onClick={() => {
+              if (window.confirm('Clear the current scene and keep only a fresh start node?')) {
+                clearScene();
+              }
+            }}
+            type="button"
+          >
+            Clear scene
+          </button>
           <button className="ghost-button danger" onClick={resetProject} type="button">
             Reset sample scene
           </button>
@@ -336,6 +422,7 @@ function EditorCanvas() {
             nodes={nodes}
             nodeTypes={nodeTypes}
             onConnect={handleConnect}
+            onConnectEnd={handleConnectEnd}
             onEdgeClick={(_, edge) => {
               const branch = edge.data?.branch as RouteBranch | undefined;
               const nodeId = edge.data?.nodeId as string | undefined;
@@ -379,11 +466,12 @@ function EditorCanvas() {
               setNodePosition(node.id.replace(/^dialogue:/, ''), node.position);
             }}
             onPaneClick={() => {
+              setPendingCreateLink(undefined);
+              setPendingNodeLink(undefined);
               setFocusChoice(undefined);
               setSelection({ kind: 'scene' });
             }}
           >
-            <MiniMap pannable zoomable />
             <Controls />
             <Background color="#40325c" gap={18} size={1} />
           </ReactFlow>
@@ -452,6 +540,161 @@ function EditorCanvas() {
       {selection.kind === 'choice' && selectedNode && selectedChoice && (
         <ChoiceEditorDialog choice={selectedChoice} node={selectedNode} onClose={() => setSelection({ kind: 'node', nodeId: selectedNode.id })} onRemove={() => removeChoice(selectedNode.id, selectedChoice.id)} />
       )}
+      {pendingNodeLink && project.nodes[pendingNodeLink.parentNodeId] && (
+        <NodeLinkCreationDialog
+          initialPosition={pendingNodeLink.flowPosition}
+          onClose={() => setPendingNodeLink(undefined)}
+          parentNode={project.nodes[pendingNodeLink.parentNodeId]}
+          project={project}
+          targetNode={pendingNodeLink.targetNodeId ? project.nodes[pendingNodeLink.targetNodeId] : undefined}
+        />
+      )}
+      {pendingCreateLink && (
+        <div
+          className="link-create-popover"
+          style={{
+            left: Math.max(12, Math.min(window.innerWidth - 220, pendingCreateLink.screenPosition.x + 12)),
+            top: Math.max(12, Math.min(window.innerHeight - 96, pendingCreateLink.screenPosition.y + 12))
+          }}
+        >
+          <div className="link-create-popover__title">Create linked card here?</div>
+          <div className="button-row">
+            <button
+              className="primary-button"
+              onClick={() => {
+                useProjectStore.getState().createConnectedNode(
+                  pendingCreateLink.nodeId,
+                  pendingCreateLink.choiceId,
+                  pendingCreateLink.branch,
+                  {
+                    x: pendingCreateLink.flowPosition.x - NODE_WIDTH / 2,
+                    y: pendingCreateLink.flowPosition.y - NODE_HEIGHT / 2
+                  }
+                );
+                setPendingCreateLink(undefined);
+              }}
+              type="button"
+            >
+              Create
+            </button>
+            <button className="ghost-button" onClick={() => setPendingCreateLink(undefined)} type="button">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NodeLinkCreationDialog({
+  project,
+  parentNode,
+  targetNode,
+  initialPosition,
+  onClose
+}: {
+  project: DialogueProject;
+  parentNode: DialogueNode;
+  targetNode?: DialogueNode;
+  initialPosition?: XYPosition;
+  onClose: () => void;
+}) {
+  const createChoiceWithNode = useProjectStore((state) => state.createChoiceWithNode);
+  const [step, setStep] = useState<1 | 2>(1);
+  const [choiceText, setChoiceText] = useState('New option');
+  const [nodeId, setNodeId] = useState('');
+  const [nodeText, setNodeText] = useState('New dialogue node.');
+  const createsNewNode = !targetNode;
+
+  function handleCreate() {
+    createChoiceWithNode(parentNode.id, {
+      choiceText,
+      targetNodeId: targetNode?.id,
+      newNode: createsNewNode
+        ? {
+            preferredId: nodeId,
+            text: nodeText,
+            position: initialPosition
+              ? {
+                  x: initialPosition.x - NODE_WIDTH / 2,
+                  y: initialPosition.y - NODE_HEIGHT / 2
+                }
+              : {
+                  x: parentNode.canvas.x + NODE_WIDTH + 120,
+                  y: parentNode.canvas.y + 80
+                }
+          }
+        : undefined
+    });
+    onClose();
+  }
+
+  return (
+    <div className="preview-overlay" role="dialog" aria-modal="true">
+      <div className="choice-editor creation-dialog">
+        <div className="preview-toolbar">
+          <strong>{createsNewNode ? 'Create Choice And Card' : 'Create Choice'}</strong>
+          <div className="toolbar-actions">
+            <button className="ghost-button" onClick={onClose} type="button">
+              Cancel
+            </button>
+          </div>
+        </div>
+
+        {step === 1 && (
+          <div className="choice-editor__grid">
+            <p className="muted-copy">
+              Add a new choice to <code>{parentNode.id}</code>
+              {targetNode ? (
+                <>
+                  {' '}
+                  and connect it to <code>{targetNode.id}</code>.
+                </>
+              ) : (
+                '.'
+              )}
+            </p>
+            <label>
+              Choice text
+              <input autoFocus value={choiceText} onChange={(event) => setChoiceText(event.target.value)} />
+            </label>
+            <div className="button-row">
+              {createsNewNode ? (
+                <button className="primary-button" onClick={() => setStep(2)} type="button">
+                  Next
+                </button>
+              ) : (
+                <button className="primary-button" onClick={handleCreate} type="button">
+                  Create choice
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {createsNewNode && step === 2 && (
+          <div className="choice-editor__grid">
+            <p className="muted-copy">Create the linked dialogue card and place it at the drop point.</p>
+            <label>
+              Card id
+              <input autoFocus placeholder="Auto-generate if blank" value={nodeId} onChange={(event) => setNodeId(event.target.value)} />
+            </label>
+            <label>
+              Dialogue text
+              <textarea rows={6} value={nodeText} onChange={(event) => setNodeText(event.target.value)} />
+            </label>
+            <div className="button-row">
+              <button className="ghost-button" onClick={() => setStep(1)} type="button">
+                Back
+              </button>
+              <button className="primary-button" onClick={handleCreate} type="button">
+                Create card
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
