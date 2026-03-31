@@ -38,7 +38,7 @@ function TerminalNodeComponent({ data, dragging }: NodeProps) {
       {targetHandleSides.map((side) => (
         <Handle
           key={side}
-          className={`route-target route-target--terminal route-target--${side}`}
+          className={`route-target route-target--terminal route-target--hidden route-target--${side}`}
           id={getTargetHandleId(side)}
           isConnectableStart={false}
           position={getHandlePosition(side)}

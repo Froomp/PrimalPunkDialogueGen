@@ -300,6 +300,11 @@ textarea:focus {
   border: 2px solid color-mix(in srgb, var(--node-accent) 65%, #4b3d63);
   border-radius: 4px;
   box-shadow: var(--shadow);
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    border-color 140ms ease,
+    opacity 140ms ease;
 }
 
 .skill-group-node {
@@ -317,6 +322,12 @@ textarea:focus {
     rgba(24, 20, 33, 0.34);
   box-shadow: inset 0 0 0 1px rgba(60, 125, 112, 0.12);
   pointer-events: auto;
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease,
+    opacity 140ms ease;
 }
 
 .skill-group-node__header {
@@ -342,14 +353,33 @@ textarea:focus {
   box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.22), var(--shadow);
 }
 
+.dialogue-node.is-dragging {
+  transform: scale(1.015);
+  box-shadow:
+    0 18px 32px rgba(8, 5, 16, 0.38),
+    0 0 0 2px color-mix(in srgb, var(--node-accent) 45%, transparent);
+}
+
 .dialogue-node.is-hidden {
   opacity: 0.22;
 }
 
 .dialogue-node.is-dimmed,
+.skill-group-node.is-dimmed,
 .terminal-node.is-dimmed {
   opacity: 0.14;
   filter: saturate(0.55);
+}
+
+.skill-group-node.is-dragging {
+  transform: scale(1.01);
+  border-color: color-mix(in srgb, var(--skill-group-accent) 88%, #d8f1eb 12%);
+  box-shadow:
+    inset 0 0 0 1px rgba(168, 230, 216, 0.24),
+    0 16px 30px rgba(8, 5, 16, 0.26);
+  background:
+    linear-gradient(180deg, rgba(60, 125, 112, 0.2), rgba(60, 125, 112, 0.08)),
+    rgba(24, 20, 33, 0.5);
 }
 
 .dialogue-node__header,
@@ -534,12 +564,14 @@ textarea:focus {
 }
 
 .route-handle--ghost {
-  width: 12px;
-  height: 12px;
-  opacity: 0;
-  pointer-events: none;
-  border: 0;
-  box-shadow: none;
+  width: 1px !important;
+  height: 1px !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: translate(-50%, -50%) scale(0) !important;
 }
 
 .route-target {
@@ -722,24 +754,6 @@ textarea:focus {
 
 .preview-overlay--nested {
   z-index: 26;
-}
-
-.link-create-popover {
-  position: fixed;
-  z-index: 25;
-  display: grid;
-  gap: 10px;
-  min-width: 200px;
-  padding: 12px;
-  background: rgba(25, 20, 34, 0.96);
-  border: 2px solid var(--border-strong);
-  border-radius: 8px;
-  box-shadow: 0 14px 30px rgba(8, 5, 16, 0.45);
-}
-
-.link-create-popover__title {
-  font-size: 0.9rem;
-  color: var(--text);
 }
 
 .preview-shell,
@@ -957,6 +971,18 @@ textarea:focus {
   border-radius: 3px;
   box-shadow: var(--shadow);
   text-align: center;
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    border-color 140ms ease,
+    opacity 140ms ease;
+}
+
+.terminal-node.is-dragging {
+  transform: scale(1.015);
+  box-shadow:
+    0 16px 28px rgba(8, 5, 16, 0.38),
+    0 0 0 2px rgba(139, 92, 246, 0.18);
 }
 
 .terminal-node__label {

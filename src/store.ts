@@ -70,6 +70,16 @@ type ProjectStore = {
         text: string;
         position: { x: number; y: number };
       };
+      routeNodes?: Partial<
+        Record<
+          RouteBranch,
+          {
+            preferredId?: string;
+            text?: string;
+            position: { x: number; y: number };
+          }
+        >
+      >;
     }
   ) => { choiceId: string; nodeId?: string };
   createConnectedNode: (nodeId: string, choiceId: string, branch: RouteBranch, position?: { x: number; y: number }) => void;
@@ -360,6 +370,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
       }
 
       let targetNodeId = input.targetNodeId;
+      const createdRouteNodeIds: Partial<Record<RouteBranch, string>> = {};
       if (input.newNode) {
         const nextNodeId = createUniqueNodeId(nextProject, input.newNode.preferredId);
         const nextNode = createNode(input.newNode.position, nextNodeId);
@@ -369,15 +380,51 @@ export const useProjectStore = create<ProjectStore>((set) => ({
         created.nodeId = nextNodeId;
       }
 
+      input.routeNodes &&
+        (Object.entries(input.routeNodes) as Array<
+          [
+            RouteBranch,
+            {
+              preferredId?: string;
+              text?: string;
+              position: { x: number; y: number };
+            }
+          ]
+        >).forEach(([branch, routeNode]) => {
+          if (!routeNode) {
+            return;
+          }
+
+          const nextNodeId = createUniqueNodeId(nextProject, routeNode.preferredId);
+          const nextNode = createNode(routeNode.position, nextNodeId);
+          nextNode.text = routeNode.text?.trim() || nextNode.text;
+          nextProject.nodes[nextNodeId] = nextNode;
+          createdRouteNodeIds[branch] = nextNodeId;
+        });
+
+      created.nodeId =
+        created.nodeId ??
+        createdRouteNodeIds.success ??
+        createdRouteNodeIds.next ??
+        createdRouteNodeIds.failure ??
+        createdRouteNodeIds.critical;
+
       const choice = createChoice(
         input.choiceText.trim() || 'New option',
         getChoiceCanvasPosition(parentNode.canvas, parentNode.choices.length, parentNode.choices.length + 1),
         pickChoiceColor(parentNode.choices.map((choice) => choice.color).filter((color): color is string => Boolean(color)))
       );
-      choice.nextNodeId = targetNodeId;
+      choice.nextNodeId = targetNodeId ?? createdRouteNodeIds.next;
       choice.eventName = input.eventName?.trim() || undefined;
       choice.visibilityCheck = input.visibilityCheck ? deepClone(input.visibilityCheck) : undefined;
-      choice.resolutionCheck = input.resolutionCheck ? deepClone(input.resolutionCheck) : undefined;
+      choice.resolutionCheck = input.resolutionCheck
+        ? {
+            ...deepClone(input.resolutionCheck),
+            failureNodeId: createdRouteNodeIds.failure ?? input.resolutionCheck.failureNodeId,
+            successNodeId: createdRouteNodeIds.success ?? input.resolutionCheck.successNodeId,
+            criticalSuccessNodeId: createdRouteNodeIds.critical ?? input.resolutionCheck.criticalSuccessNodeId
+          }
+        : undefined;
       parentNode.choices.push(choice);
       created.choiceId = choice.id;
 

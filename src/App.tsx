@@ -6,7 +6,6 @@ import { PreviewDialog } from './PreviewDialog';
 import { SkillGroupNode } from './SkillGroupNode';
 import { TerminalNode } from './TerminalNode';
 import {
-  compileRuntime,
   createDefaultProject,
   deriveSkillGroupLayouts,
   deriveEdges,
@@ -80,21 +79,23 @@ function getSkillGroupNodeMembership(skillGroupLayouts: SkillGroupLayout[]) {
   return membership;
 }
 
+function getGroupedChoiceMembership(skillGroupLayouts: SkillGroupLayout[]) {
+  const membership = new Map<string, Set<string>>();
+
+  skillGroupLayouts.forEach((group) => {
+    const groupedChoices = membership.get(group.sourceNodeId) ?? new Set<string>();
+    groupedChoices.add(group.choiceId);
+    membership.set(group.sourceNodeId, groupedChoices);
+  });
+
+  return membership;
+}
+
 function EditorCanvas() {
   const reactFlow = useReactFlow();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const importProjectRef = useRef<HTMLInputElement | null>(null);
   const [status, setStatus] = useState<string>('Autosave active');
-  const [pendingCreateLink, setPendingCreateLink] = useState<
-    | {
-        nodeId: string;
-        choiceId: string;
-        branch: RouteBranch;
-        flowPosition: XYPosition;
-        screenPosition: XYPosition;
-      }
-    | undefined
-  >(undefined);
   const [pendingNodeLink, setPendingNodeLink] = useState<
     | {
         parentNodeId: string;
@@ -156,6 +157,7 @@ function EditorCanvas() {
   const skillGroupLayouts = useMemo(() => deriveSkillGroupLayouts(project), [project]);
   const skillGroupById = useMemo(() => new Map(skillGroupLayouts.map((group) => [group.id, group])), [skillGroupLayouts]);
   const skillGroupByNodeId = useMemo(() => getSkillGroupNodeMembership(skillGroupLayouts), [skillGroupLayouts]);
+  const groupedChoicesByNodeId = useMemo(() => getGroupedChoiceMembership(skillGroupLayouts), [skillGroupLayouts]);
   const focusScope = useMemo(() => {
     if (!focusChoice) {
       return undefined;
@@ -175,6 +177,7 @@ function EditorCanvas() {
           label: group.label,
           subtitle: group.subtitle,
           count: group.nodeIds.length,
+          accentColor: group.accentColor,
           dimmed: Boolean(focusScope) && !group.nodeIds.some((nodeId) => focusScope?.nodeIds.has(nodeId))
         },
         style: {
@@ -200,6 +203,7 @@ function EditorCanvas() {
             node,
             accentColor: getNodeAccentColor(project, node.id),
             routeHandleDirections: routeHandleDirections[node.id] ?? {},
+            groupedChoiceIds: groupedChoicesByNodeId.get(node.id),
             dimmed: Boolean(focusScope) && !focusScope?.nodeIds.has(node.id)
           },
           selected: selection.kind !== 'scene' && selection.nodeId === node.id
@@ -231,7 +235,7 @@ function EditorCanvas() {
 
       return [...skillGroupNodes, ...dialogueNodes, ...terminalNodes];
     },
-    [closeRouteSummary, focusScope, project, routeHandleDirections, selection, skillGroupByNodeId, skillGroupLayouts, terminalPosition]
+    [closeRouteSummary, focusScope, groupedChoicesByNodeId, project, routeHandleDirections, selection, skillGroupByNodeId, skillGroupLayouts, terminalPosition]
   );
   const [nodes, setNodes, onNodesChange] = useNodesState(canvasNodes);
   const nodesRef = useRef<Node[]>(canvasNodes);
@@ -302,7 +306,6 @@ function EditorCanvas() {
   }
 
   function handleConnect(connection: Connection) {
-    setPendingCreateLink(undefined);
     setPendingNodeLink(undefined);
     const nodeHandle = parseNodeHandle(connection.sourceHandle);
     if (nodeHandle && connection.source?.startsWith('dialogue:')) {
@@ -325,11 +328,12 @@ function EditorCanvas() {
   }
 
   const handleConnectEnd: OnConnectEnd = (event, connectionState) => {
-    if (!connectionState.fromHandle || connectionState.toNode || connectionState.toHandle) {
+    if (!connectionState.fromHandle || connectionState.toNode || connectionState.toHandle || !connectionState.fromNode) {
       return;
     }
 
-    if (!connectionState.fromNode) {
+    const nodeHandle = parseNodeHandle(connectionState.fromHandle.id);
+    if (!nodeHandle || !connectionState.fromNode.id.startsWith('dialogue:')) {
       return;
     }
 
@@ -341,32 +345,12 @@ function EditorCanvas() {
         x: clientX,
         y: clientY
       });
-
-    const nodeHandle = parseNodeHandle(connectionState.fromHandle.id);
-    if (nodeHandle && connectionState.fromNode.id.startsWith('dialogue:')) {
-      const parentNodeId = connectionState.fromNode.id.replace(/^dialogue:/, '');
-      window.setTimeout(() => {
-        setPendingNodeLink({
-          parentNodeId,
-          flowPosition
-        });
-      }, 0);
-      return;
-    }
-
-    const parsed = parseSourceHandle(connectionState.fromHandle.id);
-    if (!parsed) {
-      return;
-    }
     const fromNodeId = connectionState.fromNode.id.replace(/^dialogue:/, '');
 
     window.setTimeout(() => {
-      setPendingCreateLink({
-        nodeId: fromNodeId,
-        choiceId: parsed.choiceId,
-        branch: parsed.branch,
-        flowPosition,
-        screenPosition: { x: clientX, y: clientY }
+      setPendingNodeLink({
+        parentNodeId: fromNodeId,
+        flowPosition
       });
     }, 0);
   };
@@ -471,7 +455,7 @@ function EditorCanvas() {
           </div>
           <div className="toolbar-actions">
             <span>{Object.keys(project.nodes).length} nodes</span>
-            <span>{compileRuntime(project).scene_id}.json</span>
+            <span>{project.sceneId}.json</span>
           </div>
         </div>
 
@@ -480,6 +464,7 @@ function EditorCanvas() {
             edgeTypes={edgeTypes}
             edges={edges}
             fitView
+            minZoom={0.1}
             nodes={nodes}
             nodeTypes={nodeTypes}
             defaultEdgeOptions={defaultEdgeOptions}
@@ -536,7 +521,6 @@ function EditorCanvas() {
               setNodePosition(node.id.replace(/^dialogue:/, ''), getAbsoluteCanvasPosition(node, nodeById));
             }}
             onPaneClick={() => {
-              setPendingCreateLink(undefined);
               setPendingNodeLink(undefined);
               setFocusChoice(undefined);
               setSelection({ kind: 'scene' });
@@ -649,40 +633,6 @@ function EditorCanvas() {
           targetNode={pendingNodeLink.targetNodeId ? project.nodes[pendingNodeLink.targetNodeId] : undefined}
         />
       )}
-      {pendingCreateLink && (
-        <div
-          className="link-create-popover"
-          style={{
-            left: Math.max(12, Math.min(window.innerWidth - 220, pendingCreateLink.screenPosition.x + 12)),
-            top: Math.max(12, Math.min(window.innerHeight - 96, pendingCreateLink.screenPosition.y + 12))
-          }}
-        >
-          <div className="link-create-popover__title">Create linked card here?</div>
-          <div className="button-row">
-            <button
-              className="primary-button"
-              onClick={() => {
-                useProjectStore.getState().createConnectedNode(
-                  pendingCreateLink.nodeId,
-                  pendingCreateLink.choiceId,
-                  pendingCreateLink.branch,
-                  {
-                    x: pendingCreateLink.flowPosition.x - NODE_WIDTH / 2,
-                    y: pendingCreateLink.flowPosition.y - NODE_HEIGHT / 2
-                  }
-                );
-                setPendingCreateLink(undefined);
-              }}
-              type="button"
-            >
-              Create
-            </button>
-            <button className="ghost-button" onClick={() => setPendingCreateLink(undefined)} type="button">
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -711,11 +661,66 @@ function NodeLinkCreationDialog({
   const [passiveSkill, setPassiveSkill] = useState<typeof skillIds[number]>('perception');
   const [passiveDifficulty, setPassiveDifficulty] = useState(1);
   const [hasActiveCheck, setHasActiveCheck] = useState(false);
+  const [hasCriticalSuccess, setHasCriticalSuccess] = useState(false);
   const [activeSkill, setActiveSkill] = useState<typeof skillIds[number]>('strength');
   const [activeDifficulty, setActiveDifficulty] = useState(1);
   const createsNewNode = !targetNode;
   const suggestedNodeId = slugify(choiceText) || 'node';
   const effectiveNodeId = nodeIdTouched ? nodeId : suggestedNodeId;
+  const createsOutcomeCards = createsNewNode && hasActiveCheck;
+  const targetAnchor =
+    initialPosition ??
+    ({
+      x: parentNode.canvas.x + NODE_WIDTH + 180,
+      y: parentNode.canvas.y + 80
+    } satisfies XYPosition);
+
+  function getOutcomeCardDrafts() {
+    const topY = targetAnchor.y + 92;
+    const centerOffset = NODE_WIDTH / 2;
+
+    if (hasCriticalSuccess) {
+      return {
+        failure: {
+          preferredId: `${suggestedNodeId}_fail`,
+          text: 'Failure outcome.',
+          position: { x: targetAnchor.x - 280 - centerOffset, y: topY }
+        },
+        success: {
+          preferredId: `${suggestedNodeId}_success`,
+          text: 'Success outcome.',
+          position: { x: targetAnchor.x - centerOffset, y: topY }
+        },
+        critical: {
+          preferredId: `${suggestedNodeId}_critical`,
+          text: 'Critical success outcome.',
+          position: { x: targetAnchor.x + 280 - centerOffset, y: topY }
+        }
+      } as const;
+    }
+
+    return {
+      failure: {
+        preferredId: `${suggestedNodeId}_fail`,
+        text: 'Failure outcome.',
+        position: { x: targetAnchor.x - 160 - centerOffset, y: topY }
+      },
+      success: {
+        preferredId: `${suggestedNodeId}_success`,
+        text: 'Success outcome.',
+        position: { x: targetAnchor.x + 160 - centerOffset, y: topY }
+      }
+    } as const;
+  }
+
+  useEffect(() => {
+    if (!targetNode) {
+      return;
+    }
+
+    setHasActiveCheck(false);
+    setHasCriticalSuccess(false);
+  }, [targetNode]);
 
   function handleCreate() {
     createChoiceWithNode(parentNode.id, {
@@ -735,19 +740,24 @@ function NodeLinkCreationDialog({
           }
         : undefined,
       newNode: createsNewNode
-        ? {
-            preferredId: effectiveNodeId,
-            text: nodeText,
-            position: initialPosition
-              ? {
-                  x: initialPosition.x - NODE_WIDTH / 2,
-                  y: initialPosition.y - NODE_HEIGHT / 2
-                }
-              : {
-                  x: parentNode.canvas.x + NODE_WIDTH + 120,
-                  y: parentNode.canvas.y + 80
-                }
-          }
+        ? createsOutcomeCards
+          ? undefined
+          : {
+              preferredId: effectiveNodeId,
+              text: nodeText,
+              position: initialPosition
+                ? {
+                    x: initialPosition.x - NODE_WIDTH / 2,
+                    y: initialPosition.y - NODE_HEIGHT / 2
+                  }
+                : {
+                    x: parentNode.canvas.x + NODE_WIDTH + 120,
+                    y: parentNode.canvas.y + 80
+                  }
+            }
+        : undefined,
+      routeNodes: createsOutcomeCards
+        ? getOutcomeCardDrafts()
         : undefined
     });
     onClose();
@@ -792,10 +802,17 @@ function NodeLinkCreationDialog({
                 Passive check
               </label>
               <label className="choice-toggle">
-                <input checked={hasActiveCheck} onChange={(event) => setHasActiveCheck(event.target.checked)} type="checkbox" />
+                <input checked={hasActiveCheck} disabled={Boolean(targetNode)} onChange={(event) => setHasActiveCheck(event.target.checked)} type="checkbox" />
                 Active check
               </label>
             </div>
+            {targetNode ? <p className="muted-copy">Active checks require creating new outcome cards, so they are only available when dropping into empty space.</p> : null}
+            {hasActiveCheck && (
+              <label className="choice-toggle">
+                <input checked={hasCriticalSuccess} onChange={(event) => setHasCriticalSuccess(event.target.checked)} type="checkbox" />
+                Critical success branch
+              </label>
+            )}
             {hasPassiveCheck && (
               <div className="inline-grid">
                 <label>
@@ -846,7 +863,7 @@ function NodeLinkCreationDialog({
           </div>
         )}
 
-        {createsNewNode && step === 2 && (
+        {createsNewNode && step === 2 && !createsOutcomeCards && (
           <div className="choice-editor__grid">
             <p className="muted-copy">Create the linked dialogue card and place it at the drop point.</p>
             <label>
@@ -875,6 +892,26 @@ function NodeLinkCreationDialog({
             </div>
           </div>
         )}
+
+        {createsOutcomeCards && step === 2 && (
+          <div className="choice-editor__grid">
+            <p className="muted-copy">Create the active-check outcome cards at the drop point and wrap them in a skill container.</p>
+            <div className="issue">
+              <strong>Cards to create</strong>
+              <span>Failure: <code>{`${suggestedNodeId}_fail`}</code></span>
+              <span>Success: <code>{`${suggestedNodeId}_success`}</code>{hasCriticalSuccess ? '' : ' (also handles critical success)'}</span>
+              {hasCriticalSuccess ? <span>Critical: <code>{`${suggestedNodeId}_critical`}</code></span> : null}
+            </div>
+            <div className="button-row">
+              <button className="ghost-button" onClick={() => setStep(1)} type="button">
+                Back
+              </button>
+              <button className="primary-button" onClick={handleCreate} type="button">
+                Create cards
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -883,7 +920,6 @@ function NodeLinkCreationDialog({
 function ChoiceEditorDialog({ choice, node, onClose, onRemove }: { choice: DialogueChoice; node: DialogueNode; onClose: () => void; onRemove: () => void }) {
   const project = useProjectStore((state) => state.project);
   const updateChoice = useProjectStore((state) => state.updateChoice);
-  const createConnectedNode = useProjectStore((state) => state.createConnectedNode);
 
   return (
     <div className="preview-overlay" role="dialog" aria-modal="true">
@@ -1040,24 +1076,6 @@ function ChoiceEditorDialog({ choice, node, onClose, onRemove }: { choice: Dialo
             </>
           )}
 
-          <div className="button-row">
-            <button className="mini-button" onClick={() => createConnectedNode(node.id, choice.id, 'next')} type="button">
-              Create next dialogue
-            </button>
-            {choice.resolutionCheck && (
-              <>
-                <button className="mini-button" onClick={() => createConnectedNode(node.id, choice.id, 'failure')} type="button">
-                  Create fail dialogue
-                </button>
-                <button className="mini-button" onClick={() => createConnectedNode(node.id, choice.id, 'success')} type="button">
-                  Create success dialogue
-                </button>
-                <button className="mini-button" onClick={() => createConnectedNode(node.id, choice.id, 'critical')} type="button">
-                  Create crit dialogue
-                </button>
-              </>
-            )}
-          </div>
         </div>
       </div>
     </div>

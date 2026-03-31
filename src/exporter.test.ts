@@ -21,10 +21,7 @@ describe('compileRuntime', () => {
 
     const runtime = compileRuntime(project);
 
-    expect(runtime.assets).toEqual({
-      npc_frown: { path: 'images/npc_frown.png' }
-    });
-    expect(runtime.nodes.start.portraits?.left).toBe('npc_frown');
+    expect(runtime.start.left_portrait).toBe('npc_frown');
   });
 
   it('packages referenced images into the runtime zip', async () => {
@@ -64,9 +61,7 @@ describe('compileRuntime', () => {
 
     const runtime = compileRuntime(project);
 
-    expect(runtime.nodes.inspect.portraits).toEqual({
-      left: 'npc_frown',
-      right: 'player_neutral'
-    });
+    expect(runtime.inspect.left_portrait).toBe('npc_frown');
+    expect(runtime.inspect.right_portrait).toBe('player_neutral');
   });
 });

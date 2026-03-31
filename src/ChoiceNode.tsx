@@ -21,11 +21,10 @@ export function ChoiceNode({ data, selected }: NodeProps) {
   const setSelection = useProjectStore((state) => state.setSelection);
   const updateChoice = useProjectStore((state) => state.updateChoice);
   const removeChoice = useProjectStore((state) => state.removeChoice);
-  const createConnectedNode = useProjectStore((state) => state.createConnectedNode);
 
   return (
     <article className={`dialogue-node dialogue-node--choice ${selected ? 'is-selected' : ''}`}>
-      <Handle className="route-target route-target--top" position={Position.Top} type="target" />
+      <Handle className="route-target route-target--hidden route-target--top" position={Position.Top} type="target" />
 
       <div className="dialogue-node__header">
         <button
@@ -192,27 +191,6 @@ export function ChoiceNode({ data, selected }: NodeProps) {
           </div>
         </>
       )}
-
-      <div className="choice-item__controls">
-        {!choiceData.choice.resolutionCheck && (
-          <button className="mini-button nodrag nopan" onClick={() => createConnectedNode(choiceData.nodeId, choiceData.choice.id, 'next')} type="button">
-            Add next
-          </button>
-        )}
-        {choiceData.choice.resolutionCheck && (
-          <>
-            <button className="mini-button nodrag nopan" onClick={() => createConnectedNode(choiceData.nodeId, choiceData.choice.id, 'failure')} type="button">
-              Add fail
-            </button>
-            <button className="mini-button nodrag nopan" onClick={() => createConnectedNode(choiceData.nodeId, choiceData.choice.id, 'success')} type="button">
-              Add success
-            </button>
-            <button className="mini-button nodrag nopan" onClick={() => createConnectedNode(choiceData.nodeId, choiceData.choice.id, 'critical')} type="button">
-              Add crit
-            </button>
-          </>
-        )}
-      </div>
 
       <Handle className="route-handle route-handle--next route-handle--bottom" id={choiceHandleId(choiceData.choice.id, 'next')} position={Position.Bottom} type="source" />
       {choiceData.choice.resolutionCheck && (

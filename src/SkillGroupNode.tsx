@@ -6,6 +6,7 @@ type SkillGroupNodeData = {
   label: string;
   subtitle: string;
   count: number;
+  accentColor?: string;
   dimmed?: boolean;
 };
 
@@ -32,7 +33,7 @@ function SkillGroupNodeComponent({ data, dragging }: NodeProps) {
       className={`skill-group-node ${dragging ? 'is-dragging' : ''} ${groupData.dimmed ? 'is-dimmed' : ''}`}
       style={
         {
-          '--skill-group-accent': '#3c7d70'
+          '--skill-group-accent': groupData.accentColor ?? '#3c7d70'
         } as CSSProperties
       }
     >

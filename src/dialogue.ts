@@ -39,6 +39,7 @@ export type SkillGroupLayout = {
   height: number;
   label: string;
   subtitle: string;
+  accentColor?: string;
 };
 
 type DialogueNodeBounds = {
@@ -121,7 +122,7 @@ export type RuntimeChoice = {
   next?: string;
   close?: boolean;
   event?: string;
-  visibility_check?: {
+  passive_skill_check?: {
     skill: SkillId;
     difficulty: number;
   };
@@ -136,20 +137,12 @@ export type RuntimeChoice = {
 
 export type RuntimeNode = {
   text: string;
-  portraits?: {
-    left?: string;
-    right?: string;
-  };
+  left_portrait?: string;
+  right_portrait?: string;
   choices: RuntimeChoice[];
 };
 
-export type RuntimeDialogue = {
-  version: 1;
-  scene_id: string;
-  start_node: string;
-  assets: Record<string, { path: string }>;
-  nodes: Record<string, RuntimeNode>;
-};
+export type RuntimeDialogue = Record<string, RuntimeNode>;
 
 const skillSchema = z.enum(skillIds);
 const passiveSkillSchema = z.object({
@@ -178,6 +171,37 @@ export const choiceSchema: z.ZodType<DialogueChoice> = z.object({
   visibilityCheck: passiveSkillSchema.optional(),
   resolutionCheck: activeSkillSchema.optional()
 });
+
+const runtimePassiveSkillSchema = z.object({
+  skill: skillSchema,
+  difficulty: z.number().int().min(1)
+});
+
+const runtimeActiveSkillSchema = z.object({
+  skill: skillSchema,
+  difficulty: z.number().int().min(1),
+  failure_node: z.string().optional(),
+  success_node: z.string().optional(),
+  critical_node: z.string().optional()
+});
+
+const runtimeChoiceSchema = z.object({
+  text: z.string(),
+  next: z.string().optional(),
+  close: z.boolean().optional(),
+  event: z.string().optional(),
+  passive_skill_check: runtimePassiveSkillSchema.optional(),
+  skill_check: runtimeActiveSkillSchema.optional()
+});
+
+export const runtimeNodeSchema: z.ZodType<RuntimeNode> = z.object({
+  text: z.string(),
+  left_portrait: z.string().optional(),
+  right_portrait: z.string().optional(),
+  choices: z.array(runtimeChoiceSchema)
+});
+
+export const runtimeDialogueSchema: z.ZodType<RuntimeDialogue> = z.record(runtimeNodeSchema);
 
 export const nodeSchema: z.ZodType<DialogueNode> = z.object({
   id: z.string().min(1),
@@ -936,7 +960,8 @@ export function deriveSkillGroupLayouts(project: DialogueProject): SkillGroupLay
         width: maxX - minX + paddingX * 2,
         height: maxY - minY + paddingTop + paddingBottom,
         label: choice.text || 'Skill check',
-        subtitle: `${choice.resolutionCheck.skill} • difficulty ${choice.resolutionCheck.difficulty}`
+        subtitle: `${choice.resolutionCheck.skill} • difficulty ${choice.resolutionCheck.difficulty}`,
+        accentColor: choice.color
       });
     });
   });
@@ -1176,9 +1201,9 @@ export function deriveEdges(project: DialogueProject): Edge[] {
         const sourceSide = routeHandleDirections[node.id]?.[choiceHandleId(choice.id, 'skill')] ?? 'bottom';
         const targetPoint = {
           x: resolutionGroup.position.x + resolutionGroup.width / 2,
-          y: resolutionGroup.position.y + resolutionGroup.height / 2
+          y: resolutionGroup.position.y
         };
-        const targetSide = getRouteAnchorSide(targetPoint, node.canvas);
+        const targetSide: HandleSide = 'top';
 
         pushEdge({
           id: `${node.id}:${choice.id}:skill-group`,
@@ -1426,18 +1451,9 @@ export function dialogueCanvasId(nodeId: string): string {
 }
 
 export function compileRuntime(project: DialogueProject): RuntimeDialogue {
-  const referencedAssets = new Set<string>();
-
-  const nodes = Object.fromEntries(
+  return Object.fromEntries(
     Object.values(project.nodes).map((node) => {
       const portraits = resolveNodePortraits(project, node.id);
-
-      if (portraits.left) {
-        referencedAssets.add(portraits.left);
-      }
-      if (portraits.right) {
-        referencedAssets.add(portraits.right);
-      }
 
       const runtimeChoices: RuntimeChoice[] = node.choices.map((choice) => {
         const compiled: RuntimeChoice = {
@@ -1454,7 +1470,7 @@ export function compileRuntime(project: DialogueProject): RuntimeDialogue {
           compiled.event = choice.eventName;
         }
         if (choice.visibilityCheck) {
-          compiled.visibility_check = {
+          compiled.passive_skill_check = {
             skill: choice.visibilityCheck.skill,
             difficulty: choice.visibilityCheck.difficulty
           };
@@ -1477,29 +1493,14 @@ export function compileRuntime(project: DialogueProject): RuntimeDialogue {
         choices: runtimeChoices
       };
 
-      if (portraits.left || portraits.right) {
-        runtimeNode.portraits = {
-          ...(portraits.left ? { left: portraits.left } : {}),
-          ...(portraits.right ? { right: portraits.right } : {})
-        };
+      if (portraits.left) {
+        runtimeNode.left_portrait = portraits.left;
+      }
+      if (portraits.right) {
+        runtimeNode.right_portrait = portraits.right;
       }
 
       return [node.id, runtimeNode];
     })
   );
-
-  const assets = Object.fromEntries(
-    [...referencedAssets]
-      .map((assetId) => project.assets[assetId])
-      .filter((asset): asset is AssetEntry => Boolean(asset))
-      .map((asset) => [asset.id, { path: `images/${asset.fileName}` }])
-  );
-
-  return {
-    version: 1,
-    scene_id: project.sceneId,
-    start_node: project.startNodeId,
-    assets,
-    nodes
-  };
 }

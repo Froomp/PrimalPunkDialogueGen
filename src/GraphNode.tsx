@@ -8,6 +8,7 @@ type GraphNodeData = {
   node: DialogueNode;
   accentColor?: string;
   routeHandleDirections: RouteHandleDirectionMap;
+  groupedChoiceIds?: Set<string>;
   dimmed?: boolean;
 };
 
@@ -20,7 +21,7 @@ type RouteHandle = {
   hidden?: boolean;
 };
 
-function buildRouteHandles(node: DialogueNode, routeHandleDirections: RouteHandleDirectionMap): RouteHandle[] {
+function buildRouteHandles(node: DialogueNode, routeHandleDirections: RouteHandleDirectionMap, groupedChoiceIds?: Set<string>): RouteHandle[] {
   return node.choices.flatMap((choice, index) => {
     const branches: DisplayBranch[] = ['next'];
     if (choice.resolutionCheck) {
@@ -43,13 +44,29 @@ function buildRouteHandles(node: DialogueNode, routeHandleDirections: RouteHandl
     };
     const offsets = offsetsByCount[branches.length] ?? [0];
 
-    const handles: RouteHandle[] = branches.map((branch, branchIndex) => ({
-      id: choiceHandleId(choice.id, branch),
-      branch,
-      side: routeHandleDirections[choiceHandleId(choice.id, branch)] ?? 'bottom',
-      crossAxis,
-      offset: offsets[branchIndex] ?? 0
-    }));
+    const groupedSkillChoice = groupedChoiceIds?.has(choice.id) ?? false;
+    const handles: RouteHandle[] = branches.map((branch, branchIndex) => {
+      const connected =
+        branch === 'next'
+          ? Boolean(choice.nextNodeId)
+          : branch === 'close'
+            ? Boolean(choice.close)
+            : branch === 'failure'
+              ? Boolean(choice.resolutionCheck?.failureNodeId)
+              : branch === 'success'
+                ? Boolean(choice.resolutionCheck?.successNodeId)
+                : Boolean(choice.resolutionCheck?.criticalSuccessNodeId);
+      const hiddenByGroup = groupedSkillChoice && (branch === 'failure' || branch === 'success' || branch === 'critical');
+
+      return {
+        id: choiceHandleId(choice.id, branch),
+        branch,
+        side: routeHandleDirections[choiceHandleId(choice.id, branch)] ?? 'bottom',
+        crossAxis,
+        offset: offsets[branchIndex] ?? 0,
+        hidden: hiddenByGroup || !connected
+      };
+    });
 
     if (choice.resolutionCheck) {
       handles.push({
@@ -102,7 +119,6 @@ function getRouteHandleStyle(routeHandle: RouteHandle): CSSProperties {
 
 const targetHandleSides: HandleSide[] = ['top', 'right', 'bottom', 'left'];
 const visibleTargetHandleSides = new Set<HandleSide>(['bottom']);
-
 function getHandlePosition(side: HandleSide): Position {
   if (side === 'top') {
     return Position.Top;
@@ -162,7 +178,7 @@ function GraphNodeComponent({ data, selected, dragging }: NodeProps) {
   const addChoice = useProjectStore((state) => state.addChoice);
   const setNodeHidden = useProjectStore((state) => state.setNodeHidden);
   const deleteNode = useProjectStore((state) => state.deleteNode);
-  const routeHandles = buildRouteHandles(nodeData.node, nodeData.routeHandleDirections);
+  const routeHandles = buildRouteHandles(nodeData.node, nodeData.routeHandleDirections, nodeData.groupedChoiceIds);
 
   function focusChoice(event: MouseEvent<HTMLButtonElement>, choiceId: string) {
     event.stopPropagation();
@@ -206,11 +222,11 @@ function GraphNodeComponent({ data, selected, dragging }: NodeProps) {
           key={side}
           className={`route-target route-target--${side}${visibleTargetHandleSides.has(side) ? '' : ' route-target--hidden'}`}
           id={getTargetHandleId(side)}
-          isConnectableStart
+          isConnectableStart={visibleTargetHandleSides.has(side)}
           position={getHandlePosition(side)}
           type="target"
         >
-          <FiPlus aria-hidden="true" className="route-target__icon" />
+          {visibleTargetHandleSides.has(side) ? <FiPlus aria-hidden="true" className="route-target__icon" /> : null}
         </Handle>
       ))}
 

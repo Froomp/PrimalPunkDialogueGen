@@ -20,12 +20,21 @@ export async function buildRuntimeZip(project: DialogueProject): Promise<Blob> {
 
   zip.file(`${project.sceneId}.json`, JSON.stringify(runtime, null, 2));
 
-  Object.keys(runtime.assets).forEach((assetId) => {
-    const asset = project.assets[assetId];
-    if (!asset) {
-      return;
+  const referencedAssetIds = new Set<string>();
+  Object.values(project.nodes).forEach((node) => {
+    if (node.portraits.left && project.assets[node.portraits.left]) {
+      referencedAssetIds.add(node.portraits.left);
     }
-    zip.file(`images/${asset.fileName}`, dataUrlToBytes(asset.dataUrl));
+    if (node.portraits.right && project.assets[node.portraits.right]) {
+      referencedAssetIds.add(node.portraits.right);
+    }
+  });
+
+  referencedAssetIds.forEach((assetId) => {
+    const asset = project.assets[assetId];
+    if (asset) {
+      zip.file(`images/${asset.fileName}`, dataUrlToBytes(asset.dataUrl));
+    }
   });
 
   return zip.generateAsync({ type: 'blob' });
