@@ -97,4 +97,31 @@ describe('App', () => {
 
     expect(useProjectStore.getState().project.nodes.start.choices.find((choice) => choice.id === 'choice_inspect')?.color).toBe('#ff8844');
   });
+
+  it('creates a linked node choice with optional skill checks', () => {
+    const result = useProjectStore.getState().createChoiceWithNode('start', {
+      choiceText: 'Hack terminal',
+      visibilityCheck: {
+        skill: 'perception',
+        difficulty: 2
+      },
+      resolutionCheck: {
+        skill: 'technology',
+        difficulty: 4
+      },
+      newNode: {
+        preferredId: 'hack_terminal',
+        text: 'Terminal access granted.',
+        position: { x: 640, y: 320 }
+      }
+    });
+
+    const project = useProjectStore.getState().project;
+    const choice = project.nodes.start.choices.find((candidate) => candidate.id === result.choiceId);
+
+    expect(result.nodeId).toBe('hack_terminal');
+    expect(project.nodes.hack_terminal?.text).toBe('Terminal access granted.');
+    expect(choice?.visibilityCheck?.skill).toBe('perception');
+    expect(choice?.resolutionCheck?.skill).toBe('technology');
+  });
 });

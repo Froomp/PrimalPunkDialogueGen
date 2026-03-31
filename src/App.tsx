@@ -19,6 +19,7 @@ import {
   parseNodeHandle,
   parseSourceHandle,
   skillIds,
+  slugify,
   terminalCanvasId,
   type DialogueChoice,
   type DialogueNode,
@@ -604,16 +605,39 @@ function NodeLinkCreationDialog({
   const [step, setStep] = useState<1 | 2>(1);
   const [choiceText, setChoiceText] = useState('New option');
   const [nodeId, setNodeId] = useState('');
+  const [nodeIdTouched, setNodeIdTouched] = useState(false);
   const [nodeText, setNodeText] = useState('New dialogue node.');
+  const [eventName, setEventName] = useState('');
+  const [hasPassiveCheck, setHasPassiveCheck] = useState(false);
+  const [passiveSkill, setPassiveSkill] = useState<typeof skillIds[number]>('perception');
+  const [passiveDifficulty, setPassiveDifficulty] = useState(1);
+  const [hasActiveCheck, setHasActiveCheck] = useState(false);
+  const [activeSkill, setActiveSkill] = useState<typeof skillIds[number]>('strength');
+  const [activeDifficulty, setActiveDifficulty] = useState(1);
   const createsNewNode = !targetNode;
+  const suggestedNodeId = slugify(choiceText) || 'node';
+  const effectiveNodeId = nodeIdTouched ? nodeId : suggestedNodeId;
 
   function handleCreate() {
     createChoiceWithNode(parentNode.id, {
       choiceText,
       targetNodeId: targetNode?.id,
+      eventName,
+      visibilityCheck: hasPassiveCheck
+        ? {
+            skill: passiveSkill,
+            difficulty: Math.max(1, passiveDifficulty)
+          }
+        : undefined,
+      resolutionCheck: hasActiveCheck
+        ? {
+            skill: activeSkill,
+            difficulty: Math.max(1, activeDifficulty)
+          }
+        : undefined,
       newNode: createsNewNode
         ? {
-            preferredId: nodeId,
+            preferredId: effectiveNodeId,
             text: nodeText,
             position: initialPosition
               ? {
@@ -659,6 +683,56 @@ function NodeLinkCreationDialog({
               Choice text
               <input autoFocus value={choiceText} onChange={(event) => setChoiceText(event.target.value)} />
             </label>
+            <label>
+              Event name
+              <input placeholder="Optional event trigger" value={eventName} onChange={(event) => setEventName(event.target.value)} />
+            </label>
+            <div className="choice-editor__toggles">
+              <label className="choice-toggle">
+                <input checked={hasPassiveCheck} onChange={(event) => setHasPassiveCheck(event.target.checked)} type="checkbox" />
+                Passive check
+              </label>
+              <label className="choice-toggle">
+                <input checked={hasActiveCheck} onChange={(event) => setHasActiveCheck(event.target.checked)} type="checkbox" />
+                Active check
+              </label>
+            </div>
+            {hasPassiveCheck && (
+              <div className="inline-grid">
+                <label>
+                  Passive skill
+                  <select value={passiveSkill} onChange={(event) => setPassiveSkill(event.target.value as (typeof skillIds)[number])}>
+                    {skillIds.map((skill) => (
+                      <option key={skill} value={skill}>
+                        {skill}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Difficulty
+                  <input min={1} type="number" value={passiveDifficulty} onChange={(event) => setPassiveDifficulty(Number(event.target.value) || 1)} />
+                </label>
+              </div>
+            )}
+            {hasActiveCheck && (
+              <div className="inline-grid">
+                <label>
+                  Active skill
+                  <select value={activeSkill} onChange={(event) => setActiveSkill(event.target.value as (typeof skillIds)[number])}>
+                    {skillIds.map((skill) => (
+                      <option key={skill} value={skill}>
+                        {skill}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Difficulty
+                  <input min={1} type="number" value={activeDifficulty} onChange={(event) => setActiveDifficulty(Number(event.target.value) || 1)} />
+                </label>
+              </div>
+            )}
             <div className="button-row">
               {createsNewNode ? (
                 <button className="primary-button" onClick={() => setStep(2)} type="button">
@@ -678,7 +752,15 @@ function NodeLinkCreationDialog({
             <p className="muted-copy">Create the linked dialogue card and place it at the drop point.</p>
             <label>
               Card id
-              <input autoFocus placeholder="Auto-generate if blank" value={nodeId} onChange={(event) => setNodeId(event.target.value)} />
+              <input
+                autoFocus
+                placeholder="Auto-generate if blank"
+                value={effectiveNodeId}
+                onChange={(event) => {
+                  setNodeIdTouched(true);
+                  setNodeId(event.target.value);
+                }}
+              />
             </label>
             <label>
               Dialogue text

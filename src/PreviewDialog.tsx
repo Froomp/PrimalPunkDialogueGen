@@ -17,6 +17,8 @@ export function PreviewDialog({ open, project, onClose }: PreviewDialogProps) {
   const [passiveChoices, setPassiveChoices] = useState<Record<string, boolean>>({});
   const [eventLog, setEventLog] = useState<string[]>([]);
   const [editingNodeId, setEditingNodeId] = useState<string | undefined>(undefined);
+  const [hoveredChoiceId, setHoveredChoiceId] = useState<string | undefined>(undefined);
+  const [pendingActiveChoice, setPendingActiveChoice] = useState<DialogueChoice | undefined>(undefined);
 
   const node = project.nodes[currentNodeId];
   const previewNodes = useMemo(
@@ -39,6 +41,25 @@ export function PreviewDialog({ open, project, onClose }: PreviewDialogProps) {
     }
     return node.choices.filter((choice) => choice.visibilityCheck && passiveMode === 'ask' && passiveChoices[choice.id] === undefined);
   }, [node, passiveChoices, passiveMode]);
+  const hoveredTargetNodeIds = useMemo(() => {
+    if (!node || !hoveredChoiceId) {
+      return new Set<string>();
+    }
+
+    const hoveredChoice = node.choices.find((choice) => choice.id === hoveredChoiceId);
+    if (!hoveredChoice) {
+      return new Set<string>();
+    }
+
+    return new Set(
+      [
+        hoveredChoice.nextNodeId,
+        hoveredChoice.resolutionCheck?.failureNodeId,
+        hoveredChoice.resolutionCheck?.successNodeId,
+        hoveredChoice.resolutionCheck?.criticalSuccessNodeId
+      ].filter((targetId): targetId is string => Boolean(targetId && project.nodes[targetId]))
+    );
+  }, [hoveredChoiceId, node, project.nodes]);
 
   useEffect(() => {
     if (!project.nodes[currentNodeId]) {
@@ -60,6 +81,8 @@ export function PreviewDialog({ open, project, onClose }: PreviewDialogProps) {
     setCurrentNodeId(project.startNodeId);
     setPassiveChoices({});
     setEventLog([]);
+    setHoveredChoiceId(undefined);
+    setPendingActiveChoice(undefined);
   }
 
   function isPassiveChoiceVisible(choice: DialogueChoice): boolean {
@@ -75,24 +98,19 @@ export function PreviewDialog({ open, project, onClose }: PreviewDialogProps) {
     return passiveChoices[choice.id] === true;
   }
 
-  function executeChoice(choice: DialogueChoice) {
+  function applyChoice(choice: DialogueChoice, activeResult?: ActiveResult) {
     if (choice.eventName) {
       setEventLog((log) => [...log, `Event: ${choice.eventName}`]);
     }
 
-    if (choice.resolutionCheck) {
-      const result = window.prompt('Resolve skill check: failure, success, or critical', 'success') as ActiveResult | null;
-      if (!result) {
-        return;
-      }
-
+    if (choice.resolutionCheck && activeResult) {
       const routes: Record<ActiveResult, string | undefined> = {
         failure: choice.resolutionCheck.failureNodeId,
         success: choice.resolutionCheck.successNodeId,
         critical: choice.resolutionCheck.criticalSuccessNodeId ?? choice.resolutionCheck.successNodeId
       };
 
-      const nextNodeId = routes[result];
+      const nextNodeId = routes[activeResult];
       if (nextNodeId && project.nodes[nextNodeId]) {
         setCurrentNodeId(nextNodeId);
         return;
@@ -107,6 +125,15 @@ export function PreviewDialog({ open, project, onClose }: PreviewDialogProps) {
     if (choice.close) {
       onClose();
     }
+  }
+
+  function executeChoice(choice: DialogueChoice) {
+    if (choice.resolutionCheck) {
+      setPendingActiveChoice(choice);
+      return;
+    }
+
+    applyChoice(choice);
   }
 
   const currentNode: DialogueNode | undefined = node;
@@ -139,8 +166,18 @@ export function PreviewDialog({ open, project, onClose }: PreviewDialogProps) {
         </div>
 
         <div className="preview-stage">
-          <div className="preview-portrait">
-            {leftAsset ? <img alt={effectivePortraits.left} src={leftAsset.dataUrl} /> : <span>Left portrait empty</span>}
+          <div className="preview-side-column">
+            <div className="preview-portrait">
+              {leftAsset ? <img alt={effectivePortraits.left} src={leftAsset.dataUrl} /> : <span>Left portrait empty</span>}
+            </div>
+            <div className="preview-log preview-log--panel">
+              <strong>Event log</strong>
+              {eventLog.length > 0 ? (
+                eventLog.map((line) => <div key={line}>{line}</div>)
+              ) : (
+                <div className="muted-copy">Triggered events will appear here.</div>
+              )}
+            </div>
           </div>
           <div className="preview-dialogue">
             <div className="preview-text">{currentNode?.text || 'Missing start node.'}</div>
@@ -165,15 +202,18 @@ export function PreviewDialog({ open, project, onClose }: PreviewDialogProps) {
 
             <div className="preview-choices">
               {visibleChoices.map((choice) => (
-                <button className="preview-choice" key={choice.id} onClick={() => executeChoice(choice)} style={{ borderColor: choice.color, boxShadow: `inset 3px 0 0 ${choice.color}` }} type="button">
-                  {choice.text}
+                <button
+                  className={`preview-choice ${choice.eventName ? 'preview-choice--eventful' : ''}`}
+                  key={choice.id}
+                  onClick={() => executeChoice(choice)}
+                  onMouseEnter={() => setHoveredChoiceId(choice.id)}
+                  onMouseLeave={() => setHoveredChoiceId((current) => (current === choice.id ? undefined : current))}
+                  style={{ borderColor: choice.color, boxShadow: `inset 3px 0 0 ${choice.color}` }}
+                  type="button"
+                >
+                  <span>{choice.text}</span>
+                  {choice.eventName ? <span className="preview-choice__event">Event: {choice.eventName}</span> : null}
                 </button>
-              ))}
-            </div>
-
-            <div className="preview-log">
-              {eventLog.map((line) => (
-                <div key={line}>{line}</div>
               ))}
             </div>
           </div>
@@ -186,7 +226,7 @@ export function PreviewDialog({ open, project, onClose }: PreviewDialogProps) {
               {previewNodes.map((previewNode) => (
                 <button
                   aria-label={`Edit card ${previewNode.id}`}
-                  className={`preview-card-chip ${previewNode.id === currentNodeId ? 'is-active' : ''}`}
+                  className={`preview-card-chip ${previewNode.id === currentNodeId ? 'is-active' : ''} ${hoveredTargetNodeIds.has(previewNode.id) ? 'is-targeted' : ''}`}
                   key={previewNode.id}
                   onClick={() => setEditingNodeId(previewNode.id)}
                   type="button"
@@ -201,6 +241,58 @@ export function PreviewDialog({ open, project, onClose }: PreviewDialogProps) {
         </div>
       </div>
       {editingNodeId && <PreviewNodeEditorDialog nodeId={editingNodeId} onClose={() => setEditingNodeId(undefined)} project={project} />}
+      {pendingActiveChoice && (
+        <div className="preview-overlay preview-overlay--nested" role="dialog" aria-modal="true">
+          <div className="choice-editor preview-resolution-dialog">
+            <div className="preview-toolbar">
+              <strong>Resolve Skill Check</strong>
+              <div className="toolbar-actions">
+                <button className="ghost-button" onClick={() => setPendingActiveChoice(undefined)} type="button">
+                  Cancel
+                </button>
+              </div>
+            </div>
+            <div className="choice-editor__grid">
+              <p>{pendingActiveChoice.text}</p>
+              <p className="muted-copy">
+                {pendingActiveChoice.resolutionCheck?.skill} vs {pendingActiveChoice.resolutionCheck?.difficulty}
+              </p>
+              <div className="button-row">
+                <button
+                  className="ghost-button danger"
+                  onClick={() => {
+                    applyChoice(pendingActiveChoice, 'failure');
+                    setPendingActiveChoice(undefined);
+                  }}
+                  type="button"
+                >
+                  Fail
+                </button>
+                <button
+                  className="primary-button subtle"
+                  onClick={() => {
+                    applyChoice(pendingActiveChoice, 'success');
+                    setPendingActiveChoice(undefined);
+                  }}
+                  type="button"
+                >
+                  Succeed
+                </button>
+                <button
+                  className="primary-button"
+                  onClick={() => {
+                    applyChoice(pendingActiveChoice, 'critical');
+                    setPendingActiveChoice(undefined);
+                  }}
+                  type="button"
+                >
+                  Critical success
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

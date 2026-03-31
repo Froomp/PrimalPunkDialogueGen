@@ -24,14 +24,12 @@ describe('PreviewDialog', () => {
   it('routes active checks to the selected outcome', async () => {
     const user = userEvent.setup();
     const project = createDefaultProject();
-    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('critical');
 
     render(<PreviewDialog onClose={() => undefined} open project={project} />);
 
     await user.click(screen.getByRole('button', { name: 'Bash the button' }));
+    await user.click(screen.getByRole('button', { name: 'Critical success' }));
 
     expect(screen.getByText('You smash the button with brutal force. The mechanism triggers instantly.', { selector: '.preview-text' })).toBeInTheDocument();
-
-    promptSpy.mockRestore();
   });
 });

@@ -20,6 +20,8 @@ import {
   type DialogueNode,
   type DialogueProject,
   type RouteBranch,
+  type ActiveSkillCheck,
+  type PassiveSkillCheck,
   type SkillId
 } from './dialogue';
 
@@ -59,6 +61,9 @@ type ProjectStore = {
     input: {
       choiceText: string;
       targetNodeId?: string;
+      eventName?: string;
+      visibilityCheck?: PassiveSkillCheck;
+      resolutionCheck?: ActiveSkillCheck;
       newNode?: {
         preferredId?: string;
         text: string;
@@ -317,6 +322,9 @@ export const useProjectStore = create<ProjectStore>((set) => ({
         pickChoiceColor(parentNode.choices.map((choice) => choice.color).filter((color): color is string => Boolean(color)))
       );
       choice.nextNodeId = targetNodeId;
+      choice.eventName = input.eventName?.trim() || undefined;
+      choice.visibilityCheck = input.visibilityCheck ? deepClone(input.visibilityCheck) : undefined;
+      choice.resolutionCheck = input.resolutionCheck ? deepClone(input.resolutionCheck) : undefined;
       parentNode.choices.push(choice);
       created.choiceId = choice.id;
 

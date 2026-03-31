@@ -101,15 +101,17 @@ function getHandlePosition(side: HandleSide): Position {
   return Position.Bottom;
 }
 
-function getChoiceCheckChips(choice: DialogueChoice): Array<{ id: string; label: string; skill: string; color: string }> {
-  const chips: Array<{ id: string; label: string; skill: string; color: string }> = [];
+function getChoiceCheckChips(choice: DialogueChoice): Array<{ id: string; label: string; detail: string; color: string; icon: string; kind: 'skill' | 'event' }> {
+  const chips: Array<{ id: string; label: string; detail: string; color: string; icon: string; kind: 'skill' | 'event' }> = [];
 
   if (choice.visibilityCheck) {
     chips.push({
       id: `${choice.id}:visibility`,
       label: 'Passive',
-      skill: choice.visibilityCheck.skill,
-      color: getSkillColor(choice.visibilityCheck.skill)
+      detail: choice.visibilityCheck.skill,
+      color: getSkillColor(choice.visibilityCheck.skill),
+      icon: 'S',
+      kind: 'skill'
     });
   }
 
@@ -117,8 +119,21 @@ function getChoiceCheckChips(choice: DialogueChoice): Array<{ id: string; label:
     chips.push({
       id: `${choice.id}:resolution`,
       label: 'Active',
-      skill: choice.resolutionCheck.skill,
-      color: getSkillColor(choice.resolutionCheck.skill)
+      detail: choice.resolutionCheck.skill,
+      color: getSkillColor(choice.resolutionCheck.skill),
+      icon: 'S',
+      kind: 'skill'
+    });
+  }
+
+  if (choice.eventName) {
+    chips.push({
+      id: `${choice.id}:event`,
+      label: 'Event',
+      detail: choice.eventName,
+      color: '#d98143',
+      icon: 'E',
+      kind: 'event'
     });
   }
 
@@ -209,7 +224,7 @@ export function GraphNode({ data, selected }: NodeProps) {
         {nodeData.node.choices.map((choice) => (
           <div
             key={choice.id}
-            className="choice-preview nodrag nopan"
+            className={`choice-preview nodrag nopan ${choice.eventName ? 'choice-preview--eventful' : ''}`}
             style={
               {
                 '--choice-accent': choice.color ?? '#9b6bff'
@@ -231,12 +246,12 @@ export function GraphNode({ data, selected }: NodeProps) {
                   className="skill-check-chip nodrag nopan"
                   onClick={(event) => openChoice(event, choice.id)}
                   style={{ '--skill-color': chip.color } as CSSProperties}
-                  title={`${chip.label} ${chip.skill}`}
+                  title={`${chip.label} ${chip.detail}`}
                   type="button"
                 >
-                  <span className="skill-check-chip__icon">S</span>
+                  <span className={`skill-check-chip__icon ${chip.kind === 'event' ? 'skill-check-chip__icon--event' : ''}`}>{chip.icon}</span>
                   <span className="skill-check-chip__text">{chip.label}</span>
-                  <span className="skill-check-chip__skill">{chip.skill}</span>
+                  <span className="skill-check-chip__skill">{chip.detail}</span>
                 </button>
               ))}
             </div>
