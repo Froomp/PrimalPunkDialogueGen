@@ -93,6 +93,21 @@ textarea:focus {
   min-height: 100vh;
 }
 
+.app-version {
+  position: fixed;
+  left: 14px;
+  bottom: 12px;
+  z-index: 30;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(15, 12, 21, 0.78);
+  color: var(--muted);
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  backdrop-filter: blur(8px);
+}
+
 .left-rail,
 .right-rail {
   background: rgba(24, 19, 33, 0.94);
@@ -431,8 +446,9 @@ textarea:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
+   position: relative;
   min-height: 40px;
-  padding: 10px 12px;
+  padding: 10px 40px 10px 12px;
   border: 2px solid color-mix(in srgb, var(--choice-accent) 60%, var(--border));
   border-left: 5px solid var(--choice-accent);
   border-radius: 3px;
@@ -443,6 +459,23 @@ textarea:focus {
 
 .choice-preview:hover {
   background: linear-gradient(90deg, color-mix(in srgb, var(--choice-accent) 18%, transparent), rgba(54, 44, 74, 0.95));
+}
+
+.choice-preview__handle {
+  width: 16px;
+  height: 16px;
+  right: -10px;
+  border: 2px solid #120f18 !important;
+  border-radius: 999px;
+  background: var(--choice-accent) !important;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--choice-accent) 16%, transparent);
+  opacity: 0;
+  transition: opacity 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+
+.choice-preview:hover .choice-preview__handle,
+.choice-preview:focus-within .choice-preview__handle {
+  opacity: 1;
 }
 
 .choice-preview--eventful {
@@ -478,6 +511,7 @@ textarea:focus {
   align-items: center;
   gap: 6px;
   margin-left: 12px;
+  margin-right: 10px;
 }
 
 .choice-preview__edit {
@@ -493,38 +527,40 @@ textarea:focus {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px 4px 6px;
+  padding: 4px 9px 4px 6px;
   border: 1px solid color-mix(in srgb, var(--skill-color) 70%, #f4efff 10%);
   border-radius: 999px;
   background: rgba(24, 20, 33, 0.88);
   color: var(--text);
 }
 
+.skill-check-chip--event {
+  border-color: color-mix(in srgb, var(--skill-color) 76%, #ffd7d7 12%);
+  background: rgba(42, 20, 24, 0.86);
+}
+
 .skill-check-chip__icon {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   display: inline-grid;
   place-items: center;
   border-radius: 999px;
   background: var(--skill-color);
   color: #fff;
-  font-size: 0.72rem;
+  font-size: 0.86rem;
   font-weight: 800;
   -webkit-text-stroke: 0.5px rgba(14, 10, 22, 0.9);
   text-shadow: 0 0 2px rgba(14, 10, 22, 0.9);
 }
 
 .skill-check-chip__icon--event {
-  background: color-mix(in srgb, var(--skill-color) 88%, #fff 12%);
-}
-
-.skill-check-chip__text {
-  font-size: 0.72rem;
-  color: var(--muted);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--skill-color) 88%, #fff 8%);
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
 }
 
 .skill-check-chip__skill {
-  font-size: 0.76rem;
+  font-size: 0.8rem;
   text-transform: capitalize;
 }
 

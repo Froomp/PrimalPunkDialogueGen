@@ -7,10 +7,12 @@ import {
   getChoiceFocusScope,
   getRouteAnchorSide,
   getRouteHandleDirections,
+  shouldProceedWithRouteConnection,
   getTerminalNodePosition,
   terminalCanvasId,
   type DialogueProject
 } from './dialogue';
+import { vi } from 'vitest';
 
 function createProject(): DialogueProject {
   return {
@@ -138,5 +140,34 @@ describe('dialogue routing', () => {
     expect(bashGroup?.nodeIds).toEqual(['bash_fail', 'bash_success', 'bash_critical']);
     expect(bashGroup?.width).toBeGreaterThan(0);
     expect(bashGroup?.height).toBeGreaterThan(0);
+  });
+
+  it('ships the sample scene with a more open starter layout', () => {
+    const project = createDefaultProject();
+    const terminalPosition = getTerminalNodePosition(project);
+
+    expect(project.nodes.start.canvas.y).toBe(-360);
+    expect(project.nodes.bash_fail.canvas.x).toBeGreaterThan(project.nodes.inspect.canvas.x + 400);
+    expect(project.nodes.bash_critical.canvas.x).toBeGreaterThan(project.nodes.bash_success.canvas.x);
+    expect(terminalPosition?.y).toBeGreaterThan(project.nodes.bash_critical.canvas.y + 600);
+  });
+
+  it('prompts before replacing an existing route target', () => {
+    const project = createProject();
+    const confirmReplacement = vi.fn(() => true);
+
+    const result = shouldProceedWithRouteConnection(project.nodes.parent.choices[0], 'next', 'up', confirmReplacement);
+
+    expect(result).toBe(true);
+    expect(confirmReplacement).toHaveBeenCalledWith('"Right" already has a next connection to "right". Replace it with "up"?');
+  });
+
+  it('skips prompting when reconnecting to the same target or connecting an empty branch', () => {
+    const project = createProject();
+    const confirmReplacement = vi.fn();
+
+    expect(shouldProceedWithRouteConnection(project.nodes.parent.choices[0], 'next', 'right', confirmReplacement)).toBe(false);
+    expect(shouldProceedWithRouteConnection(project.nodes.parent.choices[2], 'next', 'up', confirmReplacement)).toBe(true);
+    expect(confirmReplacement).not.toHaveBeenCalled();
   });
 });

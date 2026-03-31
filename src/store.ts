@@ -5,6 +5,7 @@ import {
   createChoice,
   createConnectedNodeProject,
   createDefaultProject,
+  createLeaveChoice,
   createNode,
   createUniqueNodeId,
   deleteNodesFromProject,
@@ -55,6 +56,7 @@ type ProjectStore = {
   setTerminalPosition: (position: { x: number; y: number }) => void;
   setChoicePosition: (nodeId: string, choiceId: string, position: { x: number; y: number }) => void;
   addChoice: (nodeId: string) => void;
+  addLeaveChoice: (nodeId: string) => void;
   removeChoice: (nodeId: string, choiceId: string) => void;
   updateChoice: (nodeId: string, choiceId: string, updater: (choice: DialogueChoice) => DialogueChoice) => void;
   createChoiceWithNode: (
@@ -334,6 +336,27 @@ export const useProjectStore = create<ProjectStore>((set) => ({
 
       const choice = createChoice(
         'New option',
+        getChoiceCanvasPosition(node.canvas, node.choices.length, node.choices.length + 1),
+        pickChoiceColor(node.choices.map((choice) => choice.color).filter((color): color is string => Boolean(color)))
+      );
+
+      return {
+        project: updateNode(state.project, nodeId, (currentNode) => ({
+          ...currentNode,
+          choices: [...currentNode.choices, choice]
+        })),
+        selection: { kind: 'choice', nodeId, choiceId: choice.id },
+        focusChoice: { nodeId, choiceId: choice.id }
+      };
+    }),
+  addLeaveChoice: (nodeId) =>
+    set((state) => {
+      const node = state.project.nodes[nodeId];
+      if (!node) {
+        return {};
+      }
+
+      const choice = createLeaveChoice(
         getChoiceCanvasPosition(node.canvas, node.choices.length, node.choices.length + 1),
         pickChoiceColor(node.choices.map((choice) => choice.color).filter((color): color is string => Boolean(color)))
       );

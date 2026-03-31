@@ -124,4 +124,16 @@ describe('App', () => {
     expect(choice?.visibilityCheck?.skill).toBe('perception');
     expect(choice?.resolutionCheck?.skill).toBe('technology');
   });
+
+  it('creates a default leave choice template', () => {
+    useProjectStore.getState().addLeaveChoice('start');
+
+    const project = useProjectStore.getState().project;
+    const choice = project.nodes.start.choices.at(-1);
+
+    expect(choice?.text).toBe('Leave');
+    expect(choice?.close).toBe(true);
+    expect(choice?.eventName).toBeUndefined();
+    expect(choice?.nextNodeId).toBeUndefined();
+  });
 });

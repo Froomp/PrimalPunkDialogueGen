@@ -364,6 +364,13 @@ export function createChoice(text = 'New option', position?: { x: number; y: num
   };
 }
 
+export function createLeaveChoice(position?: { x: number; y: number }, color?: string): DialogueChoice {
+  return {
+    ...createChoice('Leave', position, color),
+    close: true
+  };
+}
+
 export function terminalCanvasId(): string {
   return SHARED_TERMINAL_NODE_ID;
 }
@@ -622,25 +629,25 @@ export function createDefaultProject(): DialogueProject {
     id: 'start',
     text: 'Red button invites you to press it.',
     portraits: {},
-    canvas: { x: 80, y: 80 },
+    canvas: { x: 120, y: 0 },
     choices: [
       {
         id: 'choice_press',
         text: 'Press the button',
-        canvas: { x: -180, y: 300 },
+        canvas: { x: -120, y: 240 },
         eventName: 'press_button',
         nextNodeId: 'pressed'
       },
       {
         id: 'choice_inspect',
         text: 'Inspect the button',
-        canvas: { x: 80, y: 300 },
+        canvas: { x: 180, y: 240 },
         nextNodeId: 'inspect'
       },
       {
         id: 'choice_bash',
         text: 'Bash the button',
-        canvas: { x: 340, y: 300 },
+        canvas: { x: 500, y: 240 },
         resolutionCheck: {
           skill: 'strength',
           difficulty: 2,
@@ -652,13 +659,13 @@ export function createDefaultProject(): DialogueProject {
       {
         id: 'choice_leave',
         text: 'Leave',
-        canvas: { x: 600, y: 300 },
+        canvas: { x: 820, y: 240 },
         close: true
       }
     ]
   };
 
-  return normalizeProject({
+  const project = normalizeProject({
     version: 1,
     sceneId: 'red_button',
     title: 'Red Button',
@@ -670,49 +677,53 @@ export function createDefaultProject(): DialogueProject {
         id: 'pressed',
         text: 'You press the button. A distant mechanism clicks.',
         portraits: {},
-        canvas: { x: -180, y: 560 },
-        choices: [{ id: 'choice_continue_press', text: 'Continue', canvas: { x: -180, y: 800 }, close: true }]
+        canvas: { x: -220, y: 560 },
+        choices: [{ id: 'choice_continue_press', text: 'Continue', canvas: { x: -220, y: 800 }, close: true }]
       },
       inspect: {
         id: 'inspect',
         text: 'It looks worn. Many have pressed it before.',
         portraits: {},
-        canvas: { x: 80, y: 560 },
+        canvas: { x: 180, y: 560 },
         choices: [
           {
             id: 'choice_press_anyway',
             text: 'Press it anyway',
-            canvas: { x: -60, y: 800 },
+            canvas: { x: 40, y: 800 },
             eventName: 'press_button',
             nextNodeId: 'pressed'
           },
-          { id: 'choice_leave_inspect', text: 'Leave', canvas: { x: 220, y: 800 }, close: true }
+          { id: 'choice_leave_inspect', text: 'Leave', canvas: { x: 320, y: 800 }, close: true }
         ]
       },
       bash_success: {
         id: 'bash_success',
         text: 'You slam the button hard enough to trigger the mechanism.',
         portraits: {},
-        canvas: { x: 340, y: 620 },
-        choices: [{ id: 'choice_bash_success', text: 'Continue', canvas: { x: 340, y: 860 }, eventName: 'press_button', close: true }]
+        canvas: { x: 1120, y: 700 },
+        choices: [{ id: 'choice_bash_success', text: 'Continue', canvas: { x: 1120, y: 940 }, eventName: 'press_button', close: true }]
       },
       bash_fail: {
         id: 'bash_fail',
         text: 'You hit the button, but nothing happens except a dull thud.',
         portraits: {},
-        canvas: { x: 40, y: 620 },
+        canvas: { x: 740, y: 700 },
         choices: [
-          { id: 'choice_try_again', text: 'Try something else', canvas: { x: -80, y: 860 }, nextNodeId: 'start' },
-          { id: 'choice_leave_fail', text: 'Leave', canvas: { x: 180, y: 860 }, close: true }
+          { id: 'choice_try_again', text: 'Try something else', canvas: { x: 620, y: 940 }, nextNodeId: 'start' },
+          { id: 'choice_leave_fail', text: 'Leave', canvas: { x: 900, y: 940 }, close: true }
         ]
       },
       bash_critical: {
         id: 'bash_critical',
         text: 'You smash the button with brutal force. The mechanism triggers instantly.',
         portraits: {},
-        canvas: { x: 640, y: 620 },
-        choices: [{ id: 'choice_bash_critical', text: 'Continue', canvas: { x: 640, y: 860 }, eventName: 'press_button', close: true }]
+        canvas: { x: 1500, y: 700 },
+        choices: [{ id: 'choice_bash_critical', text: 'Continue', canvas: { x: 1500, y: 940 }, eventName: 'press_button', close: true }]
       }
+    },
+    terminal: {
+      x: 660,
+      y: 1440
     },
     viewport: {
       x: 0,
@@ -720,6 +731,16 @@ export function createDefaultProject(): DialogueProject {
       zoom: 1
     }
   });
+
+  project.nodes.start.canvas = { x: 120, y: -360 };
+  project.nodes.pressed.canvas = { x: -220, y: 560 };
+  project.nodes.inspect.canvas = { x: 180, y: 560 };
+  project.nodes.bash_fail.canvas = { x: 740, y: 700 };
+  project.nodes.bash_success.canvas = { x: 1120, y: 700 };
+  project.nodes.bash_critical.canvas = { x: 1500, y: 700 };
+  project.terminal = { x: 660, y: 1440 };
+
+  return project;
 }
 
 export type IncomingRoute = {
@@ -1031,6 +1052,38 @@ export function parseSourceHandle(handle: string | null | undefined): { choiceId
 
 export function choiceHandleId(choiceId: string, branch: DisplayBranch): string {
   return `choice:${choiceId}:${branch}`;
+}
+
+export function getChoiceRouteTarget(choice: DialogueChoice, branch: RouteBranch): string | undefined {
+  if (branch === 'next') {
+    return choice.nextNodeId;
+  }
+  if (branch === 'failure') {
+    return choice.resolutionCheck?.failureNodeId;
+  }
+  if (branch === 'success') {
+    return choice.resolutionCheck?.successNodeId;
+  }
+  return choice.resolutionCheck?.criticalSuccessNodeId;
+}
+
+export function shouldProceedWithRouteConnection(
+  choice: DialogueChoice,
+  branch: RouteBranch,
+  targetNodeId: string,
+  confirmReplacement: (message: string) => boolean
+): boolean {
+  const currentTargetId = getChoiceRouteTarget(choice, branch);
+  if (!currentTargetId) {
+    return true;
+  }
+  if (currentTargetId === targetNodeId) {
+    return false;
+  }
+
+  const choiceLabel = choice.text.trim() || choice.id;
+  const branchLabel = branch === 'next' ? 'next connection' : `${branch} connection`;
+  return confirmReplacement(`"${choiceLabel}" already has a ${branchLabel} to "${currentTargetId}". Replace it with "${targetNodeId}"?`);
 }
 
 export function setChoiceRoute(choice: DialogueChoice, branch: RouteBranch, targetNodeId?: string): DialogueChoice {

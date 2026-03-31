@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { Background, Controls, MarkerType, ReactFlow, ReactFlowProvider, useNodesState, type Connection, type Edge, type Node, useReactFlow, type OnConnectEnd, type XYPosition } from '@xyflow/react';
+import packageJson from '../package.json';
 import { DialogueEdge } from './DialogueEdge';
 import { GraphNode } from './GraphNode';
 import { PreviewDialog } from './PreviewDialog';
@@ -12,6 +13,7 @@ import {
   dialogueCanvasId,
   getCloseRouteSummary,
   getChoiceFocusScope,
+  getChoiceRouteTarget,
   getNodeAccentColor,
   getTerminalNodePosition,
   getRouteHandleDirections,
@@ -19,6 +21,7 @@ import {
   NODE_WIDTH,
   parseNodeHandle,
   parseSourceHandle,
+  shouldProceedWithRouteConnection,
   skillIds,
   slugify,
   terminalCanvasId,
@@ -51,6 +54,8 @@ const defaultEdgeOptions = {
     color: '#d8cfee'
   }
 } as const;
+
+const appVersion = packageJson.version;
 
 function getAbsoluteCanvasPosition(node: Node, nodeById: Map<string, Node>): XYPosition {
   if (!node.parentId) {
@@ -125,6 +130,7 @@ function EditorCanvas() {
   const moveNodes = useProjectStore((state) => state.moveNodes);
   const setTerminalPosition = useProjectStore((state) => state.setTerminalPosition);
   const addChoice = useProjectStore((state) => state.addChoice);
+  const addLeaveChoice = useProjectStore((state) => state.addLeaveChoice);
   const removeChoice = useProjectStore((state) => state.removeChoice);
   const updateChoice = useProjectStore((state) => state.updateChoice);
   const connectRoute = useProjectStore((state) => state.connectRoute);
@@ -305,6 +311,25 @@ function EditorCanvas() {
     setStatus('Project loaded');
   }
 
+  function connectChoiceRoute(sourceNodeId: string, choiceId: string, branch: RouteBranch, targetNodeId: string) {
+    const sourceChoice = project.nodes[sourceNodeId]?.choices.find((choice) => choice.id === choiceId);
+    if (!sourceChoice) {
+      return;
+    }
+
+    const existingTargetNodeId = getChoiceRouteTarget(sourceChoice, branch);
+    if (
+      !shouldProceedWithRouteConnection(sourceChoice, branch, targetNodeId, (message) => window.confirm(message))
+    ) {
+      if (existingTargetNodeId === targetNodeId) {
+        setSelection({ kind: 'edge', nodeId: sourceNodeId, choiceId, branch });
+      }
+      return;
+    }
+
+    connectRoute(sourceNodeId, choiceId, branch, targetNodeId);
+  }
+
   function handleConnect(connection: Connection) {
     setPendingNodeLink(undefined);
     const nodeHandle = parseNodeHandle(connection.sourceHandle);
@@ -324,7 +349,8 @@ function EditorCanvas() {
     if (!connection.source || !connection.target || !parsed || !connection.target.startsWith('dialogue:')) {
       return;
     }
-    connectRoute(connection.source.replace(/^dialogue:/, ''), parsed.choiceId, parsed.branch, connection.target.replace(/^dialogue:/, ''));
+    const sourceNodeId = connection.source.replace(/^dialogue:/, '');
+    connectChoiceRoute(sourceNodeId, parsed.choiceId, parsed.branch, connection.target.replace(/^dialogue:/, ''));
   }
 
   const handleConnectEnd: OnConnectEnd = (event, connectionState) => {
@@ -592,9 +618,14 @@ function EditorCanvas() {
                 Right portrait
                 <input list="asset-list" placeholder="Inherit previous" value={selectedNode.portraits.right ?? ''} onChange={(event) => updateNodePortrait(selectedNode.id, 'right', event.target.value)} />
               </label>
-              <button className="primary-button subtle" onClick={() => addChoice(selectedNode.id)} type="button">
-                Add choice
-              </button>
+              <div className="button-row">
+                <button className="primary-button subtle" onClick={() => addChoice(selectedNode.id)} type="button">
+                  Add choice
+                </button>
+                <button className="ghost-button" onClick={() => addLeaveChoice(selectedNode.id)} type="button">
+                  Add leave choice
+                </button>
+              </div>
             </div>
           )}
 
@@ -633,6 +664,7 @@ function EditorCanvas() {
           targetNode={pendingNodeLink.targetNodeId ? project.nodes[pendingNodeLink.targetNodeId] : undefined}
         />
       )}
+      <div className="app-version">v{appVersion}</div>
     </div>
   );
 }
