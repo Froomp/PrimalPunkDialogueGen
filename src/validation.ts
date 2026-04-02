@@ -1,4 +1,4 @@
-import { compileRuntime, skillIds, type DialogueProject, type RouteBranch } from './dialogue';
+import { compileRuntime, getChoiceSkillCheck, skillIds, type DialogueProject, type RouteBranch } from './dialogue';
 
 export type ValidationSeverity = 'error' | 'warning';
 
@@ -44,12 +44,13 @@ function pushMissingTarget(
 }
 
 function choiceHasExit(choice: DialogueProject['nodes'][string]['choices'][number]): boolean {
+  const skillCheck = getChoiceSkillCheck(choice);
   return Boolean(
     choice.close ||
       choice.nextNodeId ||
-      choice.resolutionCheck?.failureNodeId ||
-      choice.resolutionCheck?.successNodeId ||
-      choice.resolutionCheck?.criticalSuccessNodeId
+      skillCheck?.failureNodeId ||
+      skillCheck?.successNodeId ||
+      skillCheck?.criticalSuccessNodeId
   );
 }
 
@@ -225,6 +226,14 @@ export function validateProject(project: DialogueProject): ValidationIssue[] {
     }
   });
 
-  compileRuntime(project);
+  try {
+    compileRuntime(project);
+  } catch (error) {
+    issues.push({
+      severity: 'error',
+      code: 'runtime-export-invalid',
+      message: error instanceof Error ? error.message : 'Runtime export failed.'
+    });
+  }
   return issues;
 }

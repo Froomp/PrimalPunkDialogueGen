@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import {
   collectCascadeDeleteNodeIds,
   connectProjectRoute,
+  applyBundledSampleLayout,
   createChoice,
   createConnectedNodeProject,
   createDefaultProject,
@@ -11,12 +12,14 @@ import {
   deleteNodesFromProject,
   deepClone,
   getChoiceCanvasPosition,
+  isDefaultLeaveChoice,
   makeId,
   normalizeChoiceColor,
   normalizeProject,
   pickChoiceColor,
   slugify,
   type AssetEntry,
+  type ChoiceConditions,
   type DialogueChoice,
   type DialogueNode,
   type DialogueProject,
@@ -48,7 +51,7 @@ type ProjectStore = {
   addNode: () => void;
   duplicateNode: (nodeId: string) => void;
   updateNodeText: (nodeId: string, value: string) => void;
-  updateNodePortrait: (nodeId: string, side: 'left' | 'right', value: string) => void;
+  updateNodePortrait: (nodeId: string, side: 'left' | 'right', value: string | null) => void;
   updateNodeId: (nodeId: string, nextId: string) => void;
   setNodeHidden: (nodeId: string, hidden: boolean) => void;
   setNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
@@ -57,6 +60,7 @@ type ProjectStore = {
   setChoicePosition: (nodeId: string, choiceId: string, position: { x: number; y: number }) => void;
   addChoice: (nodeId: string) => void;
   addLeaveChoice: (nodeId: string) => void;
+  reorderChoice: (nodeId: string, choiceId: string, targetChoiceId: string) => void;
   removeChoice: (nodeId: string, choiceId: string) => void;
   updateChoice: (nodeId: string, choiceId: string, updater: (choice: DialogueChoice) => DialogueChoice) => void;
   createChoiceWithNode: (
@@ -67,6 +71,7 @@ type ProjectStore = {
       eventName?: string;
       visibilityCheck?: PassiveSkillCheck;
       resolutionCheck?: ActiveSkillCheck;
+      conditions?: ChoiceConditions;
       newNode?: {
         preferredId?: string;
         text: string;
@@ -84,11 +89,12 @@ type ProjectStore = {
       >;
     }
   ) => { choiceId: string; nodeId?: string };
-  createConnectedNode: (nodeId: string, choiceId: string, branch: RouteBranch, position?: { x: number; y: number }) => void;
+  createConnectedNode: (nodeId: string, choiceId: string, branch: RouteBranch, position?: { x: number; y: number }, preferredId?: string) => string;
+  createConnectedNodeInline: (nodeId: string, choiceId: string, branch: RouteBranch, preferredId?: string) => string;
   connectRoute: (nodeId: string, choiceId: string, branch: RouteBranch, targetNodeId?: string) => void;
   clearEdge: (nodeId: string, choiceId: string, branch: RouteBranch) => void;
   deleteNode: (nodeId: string, cascadeChildren?: boolean) => void;
-  addAsset: (asset: AssetEntry) => void;
+  addAsset: (asset: AssetEntry) => string;
   renameAsset: (oldId: string, nextId: string) => void;
   removeAsset: (assetId: string) => void;
 };
@@ -110,12 +116,34 @@ function updateChoice(project: DialogueProject, nodeId: string, choiceId: string
   }));
 }
 
+function reorderNodeChoices(node: DialogueNode, choiceId: string, targetChoiceId: string): DialogueNode {
+  const sourceIndex = node.choices.findIndex((choice) => choice.id === choiceId);
+  const targetIndex = node.choices.findIndex((choice) => choice.id === targetChoiceId);
+
+  if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
+    return node;
+  }
+
+  const nextChoices = [...node.choices];
+  const [movedChoice] = nextChoices.splice(sourceIndex, 1);
+  const insertionIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+  nextChoices.splice(insertionIndex, 0, movedChoice);
+
+  return {
+    ...node,
+    choices: nextChoices.map((choice, index, choices) => ({
+      ...choice,
+      canvas: getChoiceCanvasPosition(node.canvas, index, choices.length)
+    }))
+  };
+}
+
 export const useProjectStore = create<ProjectStore>((set) => ({
   project: createDefaultProject(),
   selection: { kind: 'scene' },
   focusChoice: undefined,
   previewOpen: false,
-  replaceProject: (project) => set({ project: normalizeProject(project), selection: { kind: 'scene' }, focusChoice: undefined }),
+  replaceProject: (project) => set({ project: applyBundledSampleLayout(normalizeProject(project)), selection: { kind: 'scene' }, focusChoice: undefined }),
   setSelection: (selection) => set({ selection }),
   setFocusChoice: (focusChoice) => set({ focusChoice }),
   setPreviewOpen: (previewOpen) => set({ previewOpen }),
@@ -139,12 +167,25 @@ export const useProjectStore = create<ProjectStore>((set) => ({
       };
     }),
   setSceneField: (field, value) =>
-    set((state) => ({
-      project: {
-        ...state.project,
-        [field]: value
+    set((state) => {
+      if (field === 'title') {
+        const nextSceneId = slugify(value.trim()) || 'dialogue';
+        return {
+          project: {
+            ...state.project,
+            title: value,
+            sceneId: nextSceneId
+          }
+        };
       }
-    })),
+
+      return {
+        project: {
+          ...state.project,
+          [field]: value
+        }
+      };
+    }),
   addNode: () =>
     set((state) => {
       const node = createNode({ x: 180, y: 180 });
@@ -206,7 +247,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
         ...node,
         portraits: {
           ...node.portraits,
-          [side]: value || undefined
+          [side]: value === null ? null : value || undefined
         }
       }))
     })),
@@ -352,7 +393,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   addLeaveChoice: (nodeId) =>
     set((state) => {
       const node = state.project.nodes[nodeId];
-      if (!node) {
+      if (!node || node.choices.some((choice) => isDefaultLeaveChoice(choice))) {
         return {};
       }
 
@@ -370,14 +411,27 @@ export const useProjectStore = create<ProjectStore>((set) => ({
         focusChoice: { nodeId, choiceId: choice.id }
       };
     }),
-  removeChoice: (nodeId, choiceId) =>
+  reorderChoice: (nodeId, choiceId, targetChoiceId) =>
     set((state) => ({
-      project: updateNode(state.project, nodeId, (node) => ({
-        ...node,
-        choices: node.choices.filter((choice) => choice.id !== choiceId)
-      })),
-      selection: { kind: 'node', nodeId }
+      project: updateNode(state.project, nodeId, (node) => reorderNodeChoices(node, choiceId, targetChoiceId))
     })),
+  removeChoice: (nodeId, choiceId) =>
+      set((state) => {
+        const removingSelectedChoice =
+          (state.selection.kind === 'choice' || state.selection.kind === 'edge') &&
+          state.selection.nodeId === nodeId &&
+          state.selection.choiceId === choiceId;
+        const removingFocusedChoice = state.focusChoice?.nodeId === nodeId && state.focusChoice.choiceId === choiceId;
+
+        return {
+          project: updateNode(state.project, nodeId, (node) => ({
+            ...node,
+            choices: node.choices.filter((choice) => choice.id !== choiceId)
+          })),
+          selection: removingSelectedChoice ? { kind: 'node', nodeId } : state.selection,
+          focusChoice: removingFocusedChoice ? undefined : state.focusChoice
+        };
+      }),
   updateChoice: (nodeId, choiceId, updater) =>
     set((state) => ({
       project: updateChoice(state.project, nodeId, choiceId, updater)
@@ -438,7 +492,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
         pickChoiceColor(parentNode.choices.map((choice) => choice.color).filter((color): color is string => Boolean(color)))
       );
       choice.nextNodeId = targetNodeId ?? createdRouteNodeIds.next;
-      choice.eventName = input.eventName?.trim() || undefined;
+      choice.eventName = normalizeEventName(input.eventName ?? '') || undefined;
       choice.visibilityCheck = input.visibilityCheck ? deepClone(input.visibilityCheck) : undefined;
       choice.resolutionCheck = input.resolutionCheck
         ? {
@@ -448,6 +502,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
             criticalSuccessNodeId: createdRouteNodeIds.critical ?? input.resolutionCheck.criticalSuccessNodeId
           }
         : undefined;
+      choice.conditions = input.conditions ? deepClone(input.conditions) : undefined;
       parentNode.choices.push(choice);
       created.choiceId = choice.id;
 
@@ -460,14 +515,31 @@ export const useProjectStore = create<ProjectStore>((set) => ({
 
     return created;
   },
-  createConnectedNode: (nodeId, choiceId, branch, position) =>
+  createConnectedNode: (nodeId, choiceId, branch, position, preferredId) => {
+    let newNodeId = '';
     set((state) => {
-      const result = createConnectedNodeProject(state.project, nodeId, choiceId, branch, position);
+      const result = createConnectedNodeProject(state.project, nodeId, choiceId, branch, position, preferredId);
+      newNodeId = result.newNodeId;
       return {
         project: result.project,
         selection: { kind: 'node', nodeId: result.newNodeId }
       };
-    }),
+    });
+    return newNodeId;
+  },
+  createConnectedNodeInline: (nodeId, choiceId, branch, preferredId) => {
+    let newNodeId = '';
+    set((state) => {
+      const result = createConnectedNodeProject(state.project, nodeId, choiceId, branch, undefined, preferredId);
+      newNodeId = result.newNodeId;
+      return {
+        project: result.project,
+        selection: { kind: 'choice', nodeId, choiceId },
+        focusChoice: { nodeId, choiceId }
+      };
+    });
+    return newNodeId;
+  },
   connectRoute: (nodeId, choiceId, branch, targetNodeId) =>
     set((state) => ({
       project: connectProjectRoute(state.project, nodeId, choiceId, branch, targetNodeId),
@@ -478,7 +550,8 @@ export const useProjectStore = create<ProjectStore>((set) => ({
       project: connectProjectRoute(state.project, nodeId, choiceId, branch, undefined),
       selection: { kind: 'choice', nodeId, choiceId }
     })),
-  addAsset: (asset) =>
+  addAsset: (asset) => {
+    let insertedId = asset.id;
     set((state) => {
       const baseId = slugify(asset.id);
       let uniqueId = baseId;
@@ -487,6 +560,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
         suffix += 1;
         uniqueId = `${baseId}_${suffix}`;
       }
+      insertedId = uniqueId;
       return {
         project: {
           ...state.project,
@@ -499,7 +573,9 @@ export const useProjectStore = create<ProjectStore>((set) => ({
           }
         }
       };
-    }),
+    });
+    return insertedId;
+  },
   renameAsset: (oldId, nextId) =>
     set((state) => {
       const sanitized = slugify(nextId);
@@ -546,10 +622,20 @@ export function setChoiceColor(value: string) {
   });
 }
 
+export function normalizeEventName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
 export function setChoiceNextField(field: 'nextNodeId' | 'eventName', value: string) {
+  const nextValue = field === 'eventName' ? normalizeEventName(value) : value;
   return (choice: DialogueChoice): DialogueChoice => ({
     ...choice,
-    [field]: value || undefined
+    [field]: nextValue || undefined
   });
 }
 
@@ -560,25 +646,37 @@ export function setChoiceClose(value: boolean) {
 export function setChoiceVisibilityEnabled(enabled: boolean) {
   return (choice: DialogueChoice): DialogueChoice => ({
     ...choice,
-    visibilityCheck: enabled ? choice.visibilityCheck ?? { skill: 'perception', difficulty: 1 } : undefined
+    visibilityCheck: enabled
+      ? choice.visibilityCheck ?? { skill: 'perception', difficulty: 1 }
+      : undefined,
+    resolutionCheck: enabled ? undefined : choice.resolutionCheck
   });
 }
 
-export function setChoiceVisibilityField(field: keyof { skill: SkillId; difficulty: number }, value: string | number) {
+export function setChoiceVisibilityField(
+  field: keyof {
+    skill: SkillId;
+    difficulty: number;
+  },
+  value: string | number
+) {
   return (choice: DialogueChoice): DialogueChoice => ({
     ...choice,
     visibilityCheck: {
       skill: choice.visibilityCheck?.skill ?? 'perception',
       difficulty: choice.visibilityCheck?.difficulty ?? 1,
-      [field]: value
-    } as { skill: SkillId; difficulty: number }
+      [field]: value || undefined
+    }
   });
 }
 
 export function setChoiceResolutionEnabled(enabled: boolean) {
   return (choice: DialogueChoice): DialogueChoice => ({
     ...choice,
-    resolutionCheck: enabled ? choice.resolutionCheck ?? { skill: 'strength', difficulty: 1 } : undefined
+    resolutionCheck: enabled
+      ? choice.resolutionCheck ?? { skill: 'strength', difficulty: 1 }
+      : undefined,
+    visibilityCheck: enabled ? undefined : choice.visibilityCheck
   });
 }
 
@@ -602,5 +700,38 @@ export function setChoiceResolutionField(
       criticalSuccessNodeId: choice.resolutionCheck?.criticalSuccessNodeId,
       [field]: value || undefined
     }
+  });
+}
+
+function normalizeFlagList(value: string): string[] | undefined {
+  const flags = [...new Set(value.split(',').map((flag) => flag.trim()).filter(Boolean))];
+  return flags.length > 0 ? flags : undefined;
+}
+
+export function setChoiceConditionsField(field: keyof ChoiceConditions, value: string) {
+  return (choice: DialogueChoice): DialogueChoice => {
+    const nextConditions: ChoiceConditions = {
+      ...choice.conditions,
+      [field]: normalizeFlagList(value)
+    };
+
+    if (!nextConditions.flagsAll && !nextConditions.flagsNot) {
+      return {
+        ...choice,
+        conditions: undefined
+      };
+    }
+
+    return {
+      ...choice,
+      conditions: nextConditions
+    };
+  };
+}
+
+export function setChoiceSetFlagsField(value: string) {
+  return (choice: DialogueChoice): DialogueChoice => ({
+    ...choice,
+    setFlags: normalizeFlagList(value)
   });
 }

@@ -1,4 +1,16 @@
-import { compileRuntime, createChoice, getChoiceCanvasPosition, projectSchema, runtimeDialogueSchema, type AssetEntry, type DialogueProject, type RuntimeDialogue } from './dialogue';
+import {
+  applyBundledSampleLayout,
+  compileRuntime,
+  createChoice,
+  getChoiceCanvasPosition,
+  legacyRuntimeDialogueSchema,
+  projectSchema,
+  runtimeDialogueSchema,
+  type AssetEntry,
+  type DialogueProject,
+  type LegacyRuntimeDialogue,
+  type RuntimeDialogue
+} from './dialogue';
 
 export const AUTOSAVE_KEY = 'primal-punk-dialogue-editor.project';
 
@@ -8,7 +20,7 @@ export function loadProjectFromStorage(): DialogueProject | null {
     return null;
   }
 
-  return projectSchema.parse(JSON.parse(raw));
+  return applyBundledSampleLayout(projectSchema.parse(JSON.parse(raw)));
 }
 
 export function downloadProjectFile(project: DialogueProject): void {
@@ -44,8 +56,28 @@ export async function readProjectFile(file: File): Promise<DialogueProject> {
   try {
     return projectSchema.parse(parsed);
   } catch {
-    return runtimeDialogueToProject(runtimeDialogueSchema.parse(parsed), file.name.replace(/\.json$/i, ''));
+    const sceneId = file.name.replace(/\.json$/i, '');
+
+    try {
+      return runtimeDialogueToProject(runtimeDialogueSchema.parse(parsed), sceneId);
+    } catch {
+      return legacyRuntimeDialogueToProject(legacyRuntimeDialogueSchema.parse(parsed), sceneId);
+    }
   }
+}
+
+function addPortraitAsset(assets: DialogueProject['assets'], portrait?: string | null): void {
+  if (!portrait || assets[portrait]) {
+    return;
+  }
+
+  const normalizedName = portrait.split('/').pop() || `${portrait}.png`;
+  assets[portrait] = {
+    id: portrait,
+    fileName: normalizedName,
+    mimeType: 'application/octet-stream',
+    dataUrl: 'data:,'
+  };
 }
 
 function runtimeDialogueToProject(runtime: RuntimeDialogue, sceneId: string): DialogueProject {
@@ -95,19 +127,8 @@ function runtimeDialogueToProject(runtime: RuntimeDialogue, sceneId: string): Di
   const nodes = Object.fromEntries(
     nodeIds.map((nodeId) => {
       const runtimeNode = runtime[nodeId];
-      [runtimeNode.left_portrait, runtimeNode.right_portrait]
-        .filter((portrait): portrait is string => Boolean(portrait))
-        .forEach((portrait) => {
-          if (!assets[portrait]) {
-            const normalizedName = portrait.split('/').pop() || `${portrait}.png`;
-            assets[portrait] = {
-              id: portrait,
-              fileName: normalizedName,
-              mimeType: 'application/octet-stream',
-              dataUrl: 'data:,'
-            };
-          }
-        });
+      addPortraitAsset(assets, runtimeNode.portraits?.left);
+      addPortraitAsset(assets, runtimeNode.portraits?.right);
       const depth = levels.get(nodeId) ?? 0;
       const siblings = nodesAtDepth.get(depth) ?? [nodeId];
       const index = siblings.indexOf(nodeId);
@@ -123,8 +144,8 @@ function runtimeDialogueToProject(runtime: RuntimeDialogue, sceneId: string): Di
           text: runtimeNode.text,
           hidden: false,
           portraits: {
-            ...(runtimeNode.left_portrait ? { left: runtimeNode.left_portrait } : {}),
-            ...(runtimeNode.right_portrait ? { right: runtimeNode.right_portrait } : {})
+            ...(runtimeNode.portraits?.left !== undefined ? { left: runtimeNode.portraits.left } : {}),
+            ...(runtimeNode.portraits?.right !== undefined ? { right: runtimeNode.portraits.right } : {})
           },
           canvas,
           choices: runtimeNode.choices.map((choice, choiceIndex) => {
@@ -132,10 +153,11 @@ function runtimeDialogueToProject(runtime: RuntimeDialogue, sceneId: string): Di
             created.nextNodeId = choice.next;
             created.close = choice.close;
             created.eventName = choice.event;
-            created.visibilityCheck = choice.passive_skill_check
+            created.setFlags = choice.set_flags?.length ? choice.set_flags : undefined;
+            created.visibilityCheck = choice.passive_check
               ? {
-                  skill: choice.passive_skill_check.skill,
-                  difficulty: choice.passive_skill_check.difficulty
+                  skill: choice.passive_check.skill,
+                  difficulty: choice.passive_check.difficulty
                 }
               : undefined;
             created.resolutionCheck = choice.skill_check
@@ -145,6 +167,12 @@ function runtimeDialogueToProject(runtime: RuntimeDialogue, sceneId: string): Di
                   failureNodeId: choice.skill_check.failure_node,
                   successNodeId: choice.skill_check.success_node,
                   criticalSuccessNodeId: choice.skill_check.critical_node
+                }
+              : undefined;
+            created.conditions = choice.conditions
+              ? {
+                  ...(choice.conditions.flags_all?.length ? { flagsAll: choice.conditions.flags_all } : {}),
+                  ...(choice.conditions.flags_not?.length ? { flagsNot: choice.conditions.flags_not } : {})
                 }
               : undefined;
             return created;
@@ -163,4 +191,51 @@ function runtimeDialogueToProject(runtime: RuntimeDialogue, sceneId: string): Di
     nodes,
     viewport: { x: 0, y: 0, zoom: 1 }
   });
+}
+
+function legacyRuntimeDialogueToProject(runtime: LegacyRuntimeDialogue, sceneId: string): DialogueProject {
+  const upgradedRuntime: RuntimeDialogue = Object.fromEntries(
+    Object.entries(runtime).map(([nodeId, node]) => [
+      nodeId,
+      {
+        text: node.text,
+        portraits: {
+          ...(node.left_portrait ? { left: node.left_portrait } : {}),
+          ...(node.right_portrait ? { right: node.right_portrait } : {})
+        },
+        choices: node.choices.map((choice) => {
+          const passiveHasBranches = Boolean(
+            choice.passive_skill_check?.failure_node || choice.passive_skill_check?.success_node || choice.passive_skill_check?.critical_node
+          );
+
+          return {
+            text: choice.text,
+            next: choice.next,
+            close: choice.close,
+            event: choice.event,
+            passive_check:
+              choice.passive_skill_check && !passiveHasBranches
+                ? {
+                    skill: choice.passive_skill_check.skill,
+                    difficulty: choice.passive_skill_check.difficulty
+                  }
+                : undefined,
+            skill_check:
+              choice.skill_check ??
+              (choice.passive_skill_check && passiveHasBranches
+                ? {
+                    skill: choice.passive_skill_check.skill,
+                    difficulty: choice.passive_skill_check.difficulty,
+                    failure_node: choice.passive_skill_check.failure_node,
+                    success_node: choice.passive_skill_check.success_node,
+                    critical_node: choice.passive_skill_check.critical_node
+                  }
+                : undefined)
+          };
+        })
+      }
+    ])
+  );
+
+  return runtimeDialogueToProject(upgradedRuntime, sceneId);
 }

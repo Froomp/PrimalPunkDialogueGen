@@ -8,14 +8,13 @@ type PreviewDialogProps = {
   onClose: () => void;
 };
 
-type PassiveMode = 'ask' | 'pass-all' | 'fail-all';
 type ActiveResult = 'failure' | 'success' | 'critical';
 
 export function PreviewDialog({ open, project, onClose }: PreviewDialogProps) {
   const [currentNodeId, setCurrentNodeId] = useState(project.startNodeId);
-  const [passiveMode, setPassiveMode] = useState<PassiveMode>('ask');
-  const [passiveChoices, setPassiveChoices] = useState<Record<string, boolean>>({});
+  const [hidePassiveChoices, setHidePassiveChoices] = useState(false);
   const [eventLog, setEventLog] = useState<string[]>([]);
+  const [activeFlags, setActiveFlags] = useState<string[]>([]);
   const [editingNodeId, setEditingNodeId] = useState<string | undefined>(undefined);
   const [hoveredChoiceId, setHoveredChoiceId] = useState<string | undefined>(undefined);
   const [pendingActiveChoice, setPendingActiveChoice] = useState<DialogueChoice | undefined>(undefined);
@@ -35,12 +34,6 @@ export function PreviewDialog({ open, project, onClose }: PreviewDialogProps) {
     [project.nodes, project.startNodeId]
   );
 
-  const unresolvedPassiveChoices = useMemo(() => {
-    if (!node) {
-      return [];
-    }
-    return node.choices.filter((choice) => choice.visibilityCheck && passiveMode === 'ask' && passiveChoices[choice.id] === undefined);
-  }, [node, passiveChoices, passiveMode]);
   const hoveredTargetNodeIds = useMemo(() => {
     if (!node || !hoveredChoiceId) {
       return new Set<string>();
@@ -79,35 +72,32 @@ export function PreviewDialog({ open, project, onClose }: PreviewDialogProps) {
 
   function resetPreview() {
     setCurrentNodeId(project.startNodeId);
-    setPassiveChoices({});
     setEventLog([]);
+    setActiveFlags([]);
     setHoveredChoiceId(undefined);
     setPendingActiveChoice(undefined);
-  }
-
-  function isPassiveChoiceVisible(choice: DialogueChoice): boolean {
-    if (!choice.visibilityCheck) {
-      return true;
-    }
-    if (passiveMode === 'pass-all') {
-      return true;
-    }
-    if (passiveMode === 'fail-all') {
-      return false;
-    }
-    return passiveChoices[choice.id] === true;
   }
 
   function applyChoice(choice: DialogueChoice, activeResult?: ActiveResult) {
     if (choice.eventName) {
       setEventLog((log) => [...log, `Event: ${choice.eventName}`]);
     }
+    if (choice.setFlags?.length) {
+      const nextFlags = choice.setFlags;
+      setActiveFlags((currentFlags) => {
+        const mergedFlags = [...new Set([...currentFlags, ...nextFlags])];
+        return mergedFlags;
+      });
+      setEventLog((log) => [...log, `Set flags: ${nextFlags.join(', ')}`]);
+    }
 
-    if (choice.resolutionCheck && activeResult) {
+    const skillCheck = choice.resolutionCheck;
+
+    if (skillCheck && activeResult) {
       const routes: Record<ActiveResult, string | undefined> = {
-        failure: choice.resolutionCheck.failureNodeId,
-        success: choice.resolutionCheck.successNodeId,
-        critical: choice.resolutionCheck.criticalSuccessNodeId ?? choice.resolutionCheck.successNodeId
+        failure: skillCheck.failureNodeId,
+        success: skillCheck.successNodeId,
+        critical: skillCheck.criticalSuccessNodeId ?? skillCheck.successNodeId
       };
 
       const nextNodeId = routes[activeResult];
@@ -127,7 +117,18 @@ export function PreviewDialog({ open, project, onClose }: PreviewDialogProps) {
     }
   }
 
+  function passesConditions(choice: DialogueChoice) {
+    const requiredFlags = choice.conditions?.flagsAll ?? [];
+    const blockedFlags = choice.conditions?.flagsNot ?? [];
+
+    return requiredFlags.every((flag) => activeFlags.includes(flag)) && blockedFlags.every((flag) => !activeFlags.includes(flag));
+  }
+
   function executeChoice(choice: DialogueChoice) {
+    if (choice.visibilityCheck && hidePassiveChoices) {
+      return;
+    }
+
     if (choice.resolutionCheck) {
       setPendingActiveChoice(choice);
       return;
@@ -137,7 +138,7 @@ export function PreviewDialog({ open, project, onClose }: PreviewDialogProps) {
   }
 
   const currentNode: DialogueNode | undefined = node;
-  const visibleChoices = currentNode?.choices.filter(isPassiveChoiceVisible) ?? [];
+  const visibleChoices = (currentNode?.choices ?? []).filter((choice) => !(hidePassiveChoices && choice.visibilityCheck) && passesConditions(choice));
   const effectivePortraits = currentNode ? resolveNodePortraits(project, currentNode.id) : {};
   const leftAsset = effectivePortraits.left ? project.assets[effectivePortraits.left] : undefined;
   const rightAsset = effectivePortraits.right ? project.assets[effectivePortraits.right] : undefined;
@@ -145,19 +146,15 @@ export function PreviewDialog({ open, project, onClose }: PreviewDialogProps) {
   return (
     <div className="preview-overlay" role="dialog" aria-modal="true">
       <div className="preview-shell">
-        <div className="preview-toolbar">
-          <strong>Preview</strong>
-          <div className="toolbar-actions">
-            <label>
-              Passive checks
-              <select value={passiveMode} onChange={(event) => setPassiveMode(event.target.value as PassiveMode)}>
-                <option value="ask">Ask per choice</option>
-                <option value="pass-all">Pass all</option>
-                <option value="fail-all">Fail all</option>
-              </select>
-            </label>
-            <button className="ghost-button" onClick={resetPreview} type="button">
-              Restart
+          <div className="preview-toolbar">
+            <strong>Preview</strong>
+            <div className="toolbar-actions">
+              <label>
+                <input checked={hidePassiveChoices} onChange={(event) => setHidePassiveChoices(event.target.checked)} type="checkbox" />
+                Hide passive-gated choices
+              </label>
+              <button className="ghost-button" onClick={resetPreview} type="button">
+                Restart
             </button>
             <button className="ghost-button" onClick={onClose} type="button">
               Close
@@ -181,25 +178,6 @@ export function PreviewDialog({ open, project, onClose }: PreviewDialogProps) {
           </div>
           <div className="preview-dialogue">
             <div className="preview-text">{currentNode?.text || 'Missing start node.'}</div>
-            {unresolvedPassiveChoices.length > 0 && (
-              <div className="preview-resolution">
-                <strong>Resolve passive visibility</strong>
-                {unresolvedPassiveChoices.map((choice) => (
-                  <div className="preview-resolution__row" key={choice.id}>
-                    <span>{choice.text}</span>
-                    <div className="toolbar-actions">
-                      <button className="mini-button" onClick={() => setPassiveChoices((state) => ({ ...state, [choice.id]: true }))} type="button">
-                        Show
-                      </button>
-                      <button className="mini-button" onClick={() => setPassiveChoices((state) => ({ ...state, [choice.id]: false }))} type="button">
-                        Hide
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
             <div className="preview-choices">
               {visibleChoices.map((choice) => (
                 <button
@@ -221,11 +199,11 @@ export function PreviewDialog({ open, project, onClose }: PreviewDialogProps) {
             {rightAsset ? <img alt={effectivePortraits.right} src={rightAsset.dataUrl} /> : <span>Right portrait empty</span>}
           </div>
           <div className="preview-card-rail">
-            <div className="preview-card-rail__title">Cards</div>
+            <div className="preview-card-rail__title">Nodes</div>
             <div className="preview-card-rail__list">
               {previewNodes.map((previewNode) => (
                 <button
-                  aria-label={`Edit card ${previewNode.id}`}
+                  aria-label={`Edit node ${previewNode.id}`}
                   className={`preview-card-chip ${previewNode.id === currentNodeId ? 'is-active' : ''} ${hoveredTargetNodeIds.has(previewNode.id) ? 'is-targeted' : ''}`}
                   key={previewNode.id}
                   onClick={() => setEditingNodeId(previewNode.id)}
@@ -315,7 +293,7 @@ function PreviewNodeEditorDialog({ project, nodeId, onClose }: { project: Dialog
     <div className="preview-overlay preview-overlay--nested" role="dialog" aria-modal="true">
       <div className="choice-editor preview-node-editor">
         <div className="preview-toolbar">
-          <strong>Edit Card: {node.id}</strong>
+          <strong>Edit Node: {node.id}</strong>
           <div className="toolbar-actions">
             <button className="ghost-button" onClick={onClose} type="button">
               Close
@@ -330,8 +308,12 @@ function PreviewNodeEditorDialog({ project, nodeId, onClose }: { project: Dialog
           <div className="inline-grid">
             <label>
               Left portrait
-              <select value={node.portraits.left ?? ''} onChange={(event) => updateNodePortrait(node.id, 'left', event.target.value)}>
+              <select
+                value={node.portraits.left === null ? '__clear__' : node.portraits.left ?? ''}
+                onChange={(event) => updateNodePortrait(node.id, 'left', event.target.value === '__clear__' ? null : event.target.value)}
+              >
                 <option value="">Inherit previous</option>
+                <option value="__clear__">Clear portrait</option>
                 {assetIds.map((assetId) => (
                   <option key={assetId} value={assetId}>
                     {assetId}
@@ -341,8 +323,12 @@ function PreviewNodeEditorDialog({ project, nodeId, onClose }: { project: Dialog
             </label>
             <label>
               Right portrait
-              <select value={node.portraits.right ?? ''} onChange={(event) => updateNodePortrait(node.id, 'right', event.target.value)}>
+              <select
+                value={node.portraits.right === null ? '__clear__' : node.portraits.right ?? ''}
+                onChange={(event) => updateNodePortrait(node.id, 'right', event.target.value === '__clear__' ? null : event.target.value)}
+              >
                 <option value="">Inherit previous</option>
+                <option value="__clear__">Clear portrait</option>
                 {assetIds.map((assetId) => (
                   <option key={assetId} value={assetId}>
                     {assetId}
@@ -366,7 +352,7 @@ function PreviewNodeEditorDialog({ project, nodeId, onClose }: { project: Dialog
                 </button>
               </div>
             ))}
-            {node.choices.length === 0 && <p className="muted-copy">This card has no choices yet.</p>}
+            {node.choices.length === 0 && <p className="muted-copy">This node has no choices yet.</p>}
           </div>
         </div>
       </div>

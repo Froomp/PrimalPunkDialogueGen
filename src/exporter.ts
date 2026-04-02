@@ -19,6 +19,7 @@ export async function buildRuntimeZip(project: DialogueProject): Promise<Blob> {
   const runtime = compileRuntime(project);
 
   zip.file(`${project.sceneId}.json`, JSON.stringify(runtime, null, 2));
+  zip.file(`${project.sceneId}.project.json`, JSON.stringify(project, null, 2));
 
   const referencedAssetIds = new Set<string>();
   Object.values(project.nodes).forEach((node) => {

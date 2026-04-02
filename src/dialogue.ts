@@ -69,6 +69,14 @@ export type ActiveSkillCheck = {
   criticalSuccessNodeId?: string;
 };
 
+export type BranchingSkillCheck = ActiveSkillCheck;
+export type SkillCheckRouteField = 'failureNodeId' | 'successNodeId' | 'criticalSuccessNodeId';
+
+export type ChoiceConditions = {
+  flagsAll?: string[];
+  flagsNot?: string[];
+};
+
 export type DialogueChoice = {
   id: string;
   text: string;
@@ -80,8 +88,10 @@ export type DialogueChoice = {
   nextNodeId?: string;
   close?: boolean;
   eventName?: string;
+  setFlags?: string[];
   visibilityCheck?: PassiveSkillCheck;
   resolutionCheck?: ActiveSkillCheck;
+  conditions?: ChoiceConditions;
 };
 
 export type DialogueNode = {
@@ -89,8 +99,8 @@ export type DialogueNode = {
   text: string;
   hidden?: boolean;
   portraits: {
-    left?: string;
-    right?: string;
+    left?: string | null;
+    right?: string | null;
   };
   choices: DialogueChoice[];
   canvas: {
@@ -122,7 +132,8 @@ export type RuntimeChoice = {
   next?: string;
   close?: boolean;
   event?: string;
-  passive_skill_check?: {
+  set_flags?: string[];
+  passive_check?: {
     skill: SkillId;
     difficulty: number;
   };
@@ -133,16 +144,52 @@ export type RuntimeChoice = {
     success_node?: string;
     critical_node?: string;
   };
+  conditions?: {
+    flags_all?: string[];
+    flags_not?: string[];
+  };
 };
 
 export type RuntimeNode = {
   text: string;
-  left_portrait?: string;
-  right_portrait?: string;
+  portraits?: {
+    left?: string | null;
+    right?: string | null;
+  };
   choices: RuntimeChoice[];
 };
 
 export type RuntimeDialogue = Record<string, RuntimeNode>;
+
+export type LegacyRuntimeChoice = {
+  text: string;
+  next?: string;
+  close?: boolean;
+  event?: string;
+  passive_skill_check?: {
+    skill: SkillId;
+    difficulty: number;
+    failure_node?: string;
+    success_node?: string;
+    critical_node?: string;
+  };
+  skill_check?: {
+    skill: SkillId;
+    difficulty: number;
+    failure_node?: string;
+    success_node?: string;
+    critical_node?: string;
+  };
+};
+
+export type LegacyRuntimeNode = {
+  text: string;
+  left_portrait?: string;
+  right_portrait?: string;
+  choices: LegacyRuntimeChoice[];
+};
+
+export type LegacyRuntimeDialogue = Record<string, LegacyRuntimeNode>;
 
 const skillSchema = z.enum(skillIds);
 const passiveSkillSchema = z.object({
@@ -156,6 +203,10 @@ const activeSkillSchema = z.object({
   successNodeId: z.string().optional(),
   criticalSuccessNodeId: z.string().optional()
 });
+const choiceConditionsSchema = z.object({
+  flagsAll: z.array(z.string().min(1)).optional(),
+  flagsNot: z.array(z.string().min(1)).optional()
+});
 
 export const choiceSchema: z.ZodType<DialogueChoice> = z.object({
   id: z.string().min(1),
@@ -168,8 +219,10 @@ export const choiceSchema: z.ZodType<DialogueChoice> = z.object({
   nextNodeId: z.string().optional(),
   close: z.boolean().optional(),
   eventName: z.string().optional(),
+  setFlags: z.array(z.string().min(1)).optional(),
   visibilityCheck: passiveSkillSchema.optional(),
-  resolutionCheck: activeSkillSchema.optional()
+  resolutionCheck: activeSkillSchema.optional(),
+  conditions: choiceConditionsSchema.optional()
 });
 
 const runtimePassiveSkillSchema = z.object({
@@ -190,26 +243,63 @@ const runtimeChoiceSchema = z.object({
   next: z.string().optional(),
   close: z.boolean().optional(),
   event: z.string().optional(),
-  passive_skill_check: runtimePassiveSkillSchema.optional(),
-  skill_check: runtimeActiveSkillSchema.optional()
-});
+  set_flags: z.array(z.string().min(1)).optional(),
+  passive_check: runtimePassiveSkillSchema.optional(),
+  skill_check: runtimeActiveSkillSchema.optional(),
+  conditions: z
+    .object({
+      flags_all: z.array(z.string().min(1)).optional(),
+      flags_not: z.array(z.string().min(1)).optional()
+    })
+    .optional()
+}).strict();
 
 export const runtimeNodeSchema: z.ZodType<RuntimeNode> = z.object({
   text: z.string(),
-  left_portrait: z.string().optional(),
-  right_portrait: z.string().optional(),
+  portraits: z
+    .object({
+      left: z.string().nullable().optional(),
+      right: z.string().nullable().optional()
+    })
+    .optional(),
   choices: z.array(runtimeChoiceSchema)
-});
+}).strict();
 
 export const runtimeDialogueSchema: z.ZodType<RuntimeDialogue> = z.record(runtimeNodeSchema);
+
+const legacyRuntimePassiveSkillSchema = z.object({
+  skill: skillSchema,
+  difficulty: z.number().int().min(1),
+  failure_node: z.string().optional(),
+  success_node: z.string().optional(),
+  critical_node: z.string().optional()
+});
+
+const legacyRuntimeChoiceSchema = z.object({
+  text: z.string(),
+  next: z.string().optional(),
+  close: z.boolean().optional(),
+  event: z.string().optional(),
+  passive_skill_check: legacyRuntimePassiveSkillSchema.optional(),
+  skill_check: runtimeActiveSkillSchema.optional()
+}).strict();
+
+export const legacyRuntimeNodeSchema: z.ZodType<LegacyRuntimeNode> = z.object({
+  text: z.string(),
+  left_portrait: z.string().optional(),
+  right_portrait: z.string().optional(),
+  choices: z.array(legacyRuntimeChoiceSchema)
+}).strict();
+
+export const legacyRuntimeDialogueSchema: z.ZodType<LegacyRuntimeDialogue> = z.record(legacyRuntimeNodeSchema);
 
 export const nodeSchema: z.ZodType<DialogueNode> = z.object({
   id: z.string().min(1),
   text: z.string(),
   hidden: z.boolean().optional(),
   portraits: z.object({
-    left: z.string().optional(),
-    right: z.string().optional()
+    left: z.string().nullable().optional(),
+    right: z.string().nullable().optional()
   }),
   choices: z.array(choiceSchema),
   canvas: z.object({
@@ -371,6 +461,18 @@ export function createLeaveChoice(position?: { x: number; y: number }, color?: s
   };
 }
 
+export function isDefaultLeaveChoice(choice: DialogueChoice): boolean {
+  return (
+    choice.text.trim().toLowerCase() === 'leave' &&
+    Boolean(choice.close) &&
+    !choice.nextNodeId &&
+    !choice.eventName?.trim() &&
+    !choice.setFlags?.length &&
+    !choice.visibilityCheck &&
+    !choice.resolutionCheck
+  );
+}
+
 export function terminalCanvasId(): string {
   return SHARED_TERMINAL_NODE_ID;
 }
@@ -381,6 +483,25 @@ export function getSkillGroupId(sourceNodeId: string, choiceId: string): string 
 
 export function getSkillColor(skill: SkillId): string {
   return skillColors[skill];
+}
+
+export function getChoiceSkillCheck(choice: DialogueChoice): BranchingSkillCheck | undefined {
+  return choice.resolutionCheck;
+}
+
+export function getSkillCheckRouteTarget(skillCheck: BranchingSkillCheck | undefined, field: SkillCheckRouteField): string | undefined {
+  return skillCheck?.[field];
+}
+
+export function getSkillCheckRouteTargets(skillCheck: BranchingSkillCheck | undefined): string[] {
+  return [skillCheck?.failureNodeId, skillCheck?.successNodeId, skillCheck?.criticalSuccessNodeId].filter((targetId): targetId is string => Boolean(targetId));
+}
+
+export function setSkillCheckRouteTarget<T extends BranchingSkillCheck>(skillCheck: T, field: SkillCheckRouteField, targetNodeId?: string): T {
+  return {
+    ...skillCheck,
+    [field]: targetNodeId || undefined
+  };
 }
 
 export function createNode(position?: { x: number; y: number }, id?: string): DialogueNode {
@@ -459,9 +580,7 @@ function buildChildrenMap(project: DialogueProject): Map<string, string[]> {
     children.set(node.id, children.get(node.id) ?? new Set<string>());
 
     node.choices.forEach((choice) => {
-      const targets = [choice.nextNodeId, choice.resolutionCheck?.failureNodeId, choice.resolutionCheck?.successNodeId, choice.resolutionCheck?.criticalSuccessNodeId].filter(
-        (target): target is string => Boolean(target && project.nodes[target])
-      );
+      const targets = [choice.nextNodeId, ...getSkillCheckRouteTargets(getChoiceSkillCheck(choice))].filter((target): target is string => Boolean(target && project.nodes[target]));
 
       targets.forEach((target) => {
         const nodeChildren = children.get(node.id) ?? new Set<string>();
@@ -488,7 +607,7 @@ function computeNodeDepths(project: DialogueProject): Map<string, number> {
 
     const node = project.nodes[current.nodeId];
     node?.choices.forEach((choice) => {
-      [choice.nextNodeId, choice.resolutionCheck?.failureNodeId, choice.resolutionCheck?.successNodeId, choice.resolutionCheck?.criticalSuccessNodeId].forEach((targetId) => {
+      [choice.nextNodeId, ...getSkillCheckRouteTargets(getChoiceSkillCheck(choice))].forEach((targetId) => {
         if (targetId && project.nodes[targetId]) {
           queue.push({ nodeId: targetId, depth: current.depth + 1 });
         }
@@ -577,7 +696,7 @@ export function shouldAutoLayout(project: DialogueProject): boolean {
 
   Object.values(project.nodes).forEach((node) => {
     node.choices.forEach((choice) => {
-      [choice.nextNodeId, choice.resolutionCheck?.failureNodeId, choice.resolutionCheck?.successNodeId, choice.resolutionCheck?.criticalSuccessNodeId].forEach((targetId) => {
+      [choice.nextNodeId, ...getSkillCheckRouteTargets(getChoiceSkillCheck(choice))].forEach((targetId) => {
         if (!targetId || !project.nodes[targetId]) {
           return;
         }
@@ -624,6 +743,37 @@ export function normalizeProject(project: DialogueProject): DialogueProject {
   return ensureTerminalPosition(positionedProject);
 }
 
+const bundledSampleNodePositions = {
+  start: { x: 120, y: -360 },
+  pressed: { x: -220, y: 560 },
+  inspect: { x: 180, y: 560 },
+  bash_fail: { x: 740, y: 700 },
+  bash_success: { x: 1120, y: 700 },
+  bash_critical: { x: 1500, y: 700 }
+} as const;
+
+const bundledSampleTerminalPosition = { x: 660, y: 1440 } as const;
+
+export function applyBundledSampleLayout(project: DialogueProject): DialogueProject {
+  if (project.sceneId !== 'red_button') {
+    return project;
+  }
+
+  const requiredNodeIds = Object.keys(bundledSampleNodePositions);
+  if (!requiredNodeIds.every((nodeId) => project.nodes[nodeId])) {
+    return project;
+  }
+
+  const nextProject = deepClone(project);
+
+  requiredNodeIds.forEach((nodeId) => {
+    nextProject.nodes[nodeId].canvas = { ...bundledSampleNodePositions[nodeId as keyof typeof bundledSampleNodePositions] };
+  });
+  nextProject.terminal = { ...bundledSampleTerminalPosition };
+
+  return nextProject;
+}
+
 export function createDefaultProject(): DialogueProject {
   const start: DialogueNode = {
     id: 'start',
@@ -665,7 +815,7 @@ export function createDefaultProject(): DialogueProject {
     ]
   };
 
-  const project = normalizeProject({
+  return applyBundledSampleLayout(normalizeProject({
     version: 1,
     sceneId: 'red_button',
     title: 'Red Button',
@@ -730,17 +880,7 @@ export function createDefaultProject(): DialogueProject {
       y: 0,
       zoom: 1
     }
-  });
-
-  project.nodes.start.canvas = { x: 120, y: -360 };
-  project.nodes.pressed.canvas = { x: -220, y: 560 };
-  project.nodes.inspect.canvas = { x: 180, y: 560 };
-  project.nodes.bash_fail.canvas = { x: 740, y: 700 };
-  project.nodes.bash_success.canvas = { x: 1120, y: 700 };
-  project.nodes.bash_critical.canvas = { x: 1500, y: 700 };
-  project.terminal = { x: 660, y: 1440 };
-
-  return project;
+  }));
 }
 
 export type IncomingRoute = {
@@ -909,11 +1049,12 @@ export function getRouteHandleDirections(project: DialogueProject, terminalPosit
     const nodeDirections: RouteHandleDirectionMap = {};
 
     node.choices.forEach((choice) => {
+      const skillCheck = getChoiceSkillCheck(choice);
       const routes: Array<[DisplayBranch, { x: number; y: number } | undefined]> = [
         ['next', choice.nextNodeId ? project.nodes[choice.nextNodeId]?.canvas : undefined],
-        ['failure', choice.resolutionCheck?.failureNodeId ? project.nodes[choice.resolutionCheck.failureNodeId]?.canvas : undefined],
-        ['success', choice.resolutionCheck?.successNodeId ? project.nodes[choice.resolutionCheck.successNodeId]?.canvas : undefined],
-        ['critical', choice.resolutionCheck?.criticalSuccessNodeId ? project.nodes[choice.resolutionCheck.criticalSuccessNodeId]?.canvas : undefined],
+        ['failure', skillCheck?.failureNodeId ? project.nodes[skillCheck.failureNodeId]?.canvas : undefined],
+        ['success', skillCheck?.successNodeId ? project.nodes[skillCheck.successNodeId]?.canvas : undefined],
+        ['critical', skillCheck?.criticalSuccessNodeId ? project.nodes[skillCheck.criticalSuccessNodeId]?.canvas : undefined],
         ['close', choice.close ? terminalPosition : undefined]
       ];
 
@@ -921,7 +1062,7 @@ export function getRouteHandleDirections(project: DialogueProject, terminalPosit
         nodeDirections[choiceHandleId(choice.id, branch)] = targetPosition ? getRouteAnchorSide(node.canvas, targetPosition) : 'bottom';
       });
 
-      if (choice.resolutionCheck) {
+      if (skillCheck) {
         const group = skillGroupByChoiceKey.get(`${node.id}:${choice.id}`);
         const groupCenter = group
           ? {
@@ -946,12 +1087,12 @@ export function deriveSkillGroupLayouts(project: DialogueProject): SkillGroupLay
 
   Object.values(project.nodes).forEach((node) => {
     node.choices.forEach((choice) => {
-      if (!choice.resolutionCheck) {
+      const skillCheck = getChoiceSkillCheck(choice);
+      if (!skillCheck) {
         return;
       }
 
-      const routeTargets = [choice.resolutionCheck.failureNodeId, choice.resolutionCheck.successNodeId, choice.resolutionCheck.criticalSuccessNodeId]
-        .filter((targetId): targetId is string => Boolean(targetId && project.nodes[targetId]));
+      const routeTargets = getSkillCheckRouteTargets(skillCheck).filter((targetId): targetId is string => Boolean(targetId && project.nodes[targetId]));
       const uniqueTargetIds = [...new Set(routeTargets)];
 
       if (uniqueTargetIds.length < 2 || uniqueTargetIds.some((targetId) => claimedNodeIds.has(targetId))) {
@@ -981,7 +1122,7 @@ export function deriveSkillGroupLayouts(project: DialogueProject): SkillGroupLay
         width: maxX - minX + paddingX * 2,
         height: maxY - minY + paddingTop + paddingBottom,
         label: choice.text || 'Skill check',
-        subtitle: `${choice.resolutionCheck.skill} • difficulty ${choice.resolutionCheck.difficulty}`,
+        subtitle: `${skillCheck.skill} • difficulty ${skillCheck.difficulty}`,
         accentColor: choice.color
       });
     });
@@ -1019,8 +1160,8 @@ export function resolveNodePortraits(project: DialogueProject, nodeId: string, t
 
   if (trail.has(nodeId)) {
     return {
-      left: node.portraits.left,
-      right: node.portraits.right
+      left: node.portraits.left ?? undefined,
+      right: node.portraits.right ?? undefined
     };
   }
 
@@ -1030,8 +1171,8 @@ export function resolveNodePortraits(project: DialogueProject, nodeId: string, t
   const inherited = incoming?.sourceNodeId ? resolveNodePortraits(project, incoming.sourceNodeId, nextTrail) : {};
 
   return {
-    left: node.portraits.left ?? inherited.left,
-    right: node.portraits.right ?? inherited.right
+    left: node.portraits.left === null ? undefined : node.portraits.left ?? inherited.left,
+    right: node.portraits.right === null ? undefined : node.portraits.right ?? inherited.right
   };
 }
 
@@ -1055,16 +1196,17 @@ export function choiceHandleId(choiceId: string, branch: DisplayBranch): string 
 }
 
 export function getChoiceRouteTarget(choice: DialogueChoice, branch: RouteBranch): string | undefined {
+  const skillCheck = getChoiceSkillCheck(choice);
   if (branch === 'next') {
     return choice.nextNodeId;
   }
   if (branch === 'failure') {
-    return choice.resolutionCheck?.failureNodeId;
+    return skillCheck?.failureNodeId;
   }
   if (branch === 'success') {
-    return choice.resolutionCheck?.successNodeId;
+    return skillCheck?.successNodeId;
   }
-  return choice.resolutionCheck?.criticalSuccessNodeId;
+  return skillCheck?.criticalSuccessNodeId;
 }
 
 export function shouldProceedWithRouteConnection(
@@ -1094,24 +1236,15 @@ export function setChoiceRoute(choice: DialogueChoice, branch: RouteBranch, targ
     return nextChoice;
   }
 
+  const skillCheckField: SkillCheckRouteField =
+    branch === 'failure' ? 'failureNodeId' : branch === 'success' ? 'successNodeId' : 'criticalSuccessNodeId';
+
   const resolutionCheck = nextChoice.resolutionCheck ?? {
     skill: 'strength' as SkillId,
     difficulty: 1
   };
 
-  if (branch === 'failure') {
-    resolutionCheck.failureNodeId = targetNodeId || undefined;
-  }
-
-  if (branch === 'success') {
-    resolutionCheck.successNodeId = targetNodeId || undefined;
-  }
-
-  if (branch === 'critical') {
-    resolutionCheck.criticalSuccessNodeId = targetNodeId || undefined;
-  }
-
-  nextChoice.resolutionCheck = resolutionCheck;
+  nextChoice.resolutionCheck = setSkillCheckRouteTarget(resolutionCheck, skillCheckField, targetNodeId);
   return nextChoice;
 }
 
@@ -1144,7 +1277,8 @@ export function createConnectedNodeProject(
   sourceNodeId: string,
   choiceId: string,
   branch: RouteBranch,
-  position?: { x: number; y: number }
+  position?: { x: number; y: number },
+  preferredId?: string
 ): { project: DialogueProject; newNodeId: string } {
   const nextProject = deepClone(project);
   const sourceNode = nextProject.nodes[sourceNodeId];
@@ -1154,7 +1288,7 @@ export function createConnectedNodeProject(
     return { project: nextProject, newNodeId: '' };
   }
 
-  const newNode = createNode(position ?? getSpawnedNodePosition(nextProject, sourceNodeId, choiceId, branch));
+  const newNode = createNode(position ?? getSpawnedNodePosition(nextProject, sourceNodeId, choiceId, branch), createUniqueNodeId(nextProject, preferredId));
 
   nextProject.nodes[newNode.id] = newNode;
 
@@ -1244,8 +1378,8 @@ export function deriveEdges(project: DialogueProject): Edge[] {
         }, sourceSide, targetSide, node.canvas, terminalPosition);
       }
 
-      const resolution = choice.resolutionCheck;
-      if (!resolution) {
+      const skillCheck = getChoiceSkillCheck(choice);
+      if (!skillCheck) {
         return;
       }
 
@@ -1264,7 +1398,7 @@ export function deriveEdges(project: DialogueProject): Edge[] {
           sourceHandle: choiceHandleId(choice.id, 'skill'),
           target: resolutionGroup.id,
           targetHandle: getTargetHandleId(targetSide),
-          label: `${choice.text} (${resolution.skill})`,
+          label: `${choice.text} (${skillCheck.skill})`,
           className: 'edge-skill-group',
           type: 'dialogue',
           animated: true,
@@ -1281,9 +1415,9 @@ export function deriveEdges(project: DialogueProject): Edge[] {
       }
 
       const routes: Array<[RouteBranch, string | undefined]> = [
-        ['failure', resolution.failureNodeId],
-        ['success', resolution.successNodeId],
-        ['critical', resolution.criticalSuccessNodeId]
+        ['failure', skillCheck.failureNodeId],
+        ['success', skillCheck.successNodeId],
+        ['critical', skillCheck.criticalSuccessNodeId]
       ];
 
       routes.forEach(([branch, target]) => {
@@ -1375,9 +1509,7 @@ export function deriveEdges(project: DialogueProject): Edge[] {
 }
 
 function getChoiceRouteTargets(choice: DialogueChoice): string[] {
-  return [choice.nextNodeId, choice.resolutionCheck?.failureNodeId, choice.resolutionCheck?.successNodeId, choice.resolutionCheck?.criticalSuccessNodeId].filter(
-    (targetId): targetId is string => Boolean(targetId)
-  );
+  return [choice.nextNodeId, ...getSkillCheckRouteTargets(getChoiceSkillCheck(choice))].filter((targetId): targetId is string => Boolean(targetId));
 }
 
 export type FocusScope = {
@@ -1503,18 +1635,34 @@ export function dialogueCanvasId(nodeId: string): string {
   return `dialogue:${nodeId}`;
 }
 
-export function compileRuntime(project: DialogueProject): RuntimeDialogue {
-  return Object.fromEntries(
-    Object.values(project.nodes).map((node) => {
-      const portraits = resolveNodePortraits(project, node.id);
+function buildRuntimeNodeIdMap(project: DialogueProject): Map<string, string> {
+  if (!project.nodes[project.startNodeId]) {
+    throw new Error(`Start node "${project.startNodeId}" does not exist.`);
+  }
 
+  if (project.startNodeId !== 'start' && project.nodes.start) {
+    throw new Error('Cannot export runtime JSON when a non-start entry node coexists with a separate "start" node.');
+  }
+
+  return new Map(Object.keys(project.nodes).map((nodeId) => [nodeId, nodeId === project.startNodeId ? 'start' : nodeId]));
+}
+
+function toRuntimeNodeId(runtimeNodeIds: Map<string, string>, nodeId?: string): string | undefined {
+  return nodeId ? runtimeNodeIds.get(nodeId) : undefined;
+}
+
+export function compileRuntime(project: DialogueProject): RuntimeDialogue {
+  const runtimeNodeIds = buildRuntimeNodeIdMap(project);
+
+  return Object.fromEntries(
+    Object.entries(project.nodes).map(([nodeId, node]) => {
       const runtimeChoices: RuntimeChoice[] = node.choices.map((choice) => {
         const compiled: RuntimeChoice = {
           text: choice.text
         };
 
         if (choice.nextNodeId) {
-          compiled.next = choice.nextNodeId;
+          compiled.next = toRuntimeNodeId(runtimeNodeIds, choice.nextNodeId);
         }
         if (choice.close) {
           compiled.close = true;
@@ -1522,8 +1670,12 @@ export function compileRuntime(project: DialogueProject): RuntimeDialogue {
         if (choice.eventName) {
           compiled.event = choice.eventName;
         }
+        const setFlags = choice.setFlags?.map((flag) => flag.trim()).filter(Boolean);
+        if (setFlags && setFlags.length > 0) {
+          compiled.set_flags = setFlags;
+        }
         if (choice.visibilityCheck) {
-          compiled.passive_skill_check = {
+          compiled.passive_check = {
             skill: choice.visibilityCheck.skill,
             difficulty: choice.visibilityCheck.difficulty
           };
@@ -1532,9 +1684,17 @@ export function compileRuntime(project: DialogueProject): RuntimeDialogue {
           compiled.skill_check = {
             skill: choice.resolutionCheck.skill,
             difficulty: choice.resolutionCheck.difficulty,
-            failure_node: choice.resolutionCheck.failureNodeId,
-            success_node: choice.resolutionCheck.successNodeId,
-            critical_node: choice.resolutionCheck.criticalSuccessNodeId
+            failure_node: toRuntimeNodeId(runtimeNodeIds, choice.resolutionCheck.failureNodeId),
+            success_node: toRuntimeNodeId(runtimeNodeIds, choice.resolutionCheck.successNodeId),
+            critical_node: toRuntimeNodeId(runtimeNodeIds, choice.resolutionCheck.criticalSuccessNodeId)
+          };
+        }
+        const flagsAll = choice.conditions?.flagsAll?.map((flag) => flag.trim()).filter(Boolean);
+        const flagsNot = choice.conditions?.flagsNot?.map((flag) => flag.trim()).filter(Boolean);
+        if ((flagsAll && flagsAll.length > 0) || (flagsNot && flagsNot.length > 0)) {
+          compiled.conditions = {
+            ...(flagsAll && flagsAll.length > 0 ? { flags_all: flagsAll } : {}),
+            ...(flagsNot && flagsNot.length > 0 ? { flags_not: flagsNot } : {})
           };
         }
 
@@ -1546,14 +1706,15 @@ export function compileRuntime(project: DialogueProject): RuntimeDialogue {
         choices: runtimeChoices
       };
 
-      if (portraits.left) {
-        runtimeNode.left_portrait = portraits.left;
-      }
-      if (portraits.right) {
-        runtimeNode.right_portrait = portraits.right;
+      const portraits = {
+        ...(node.portraits.left !== undefined ? { left: node.portraits.left } : {}),
+        ...(node.portraits.right !== undefined ? { right: node.portraits.right } : {})
+      };
+      if (Object.keys(portraits).length > 0) {
+        runtimeNode.portraits = portraits;
       }
 
-      return [node.id, runtimeNode];
+      return [runtimeNodeIds.get(nodeId) ?? nodeId, runtimeNode];
     })
   );
 }
